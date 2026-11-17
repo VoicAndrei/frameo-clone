@@ -123,7 +123,9 @@ ssh -L 2283:127.0.0.1:2283 you@your-machine.your-tailnet.ts.net
 1. Create the Immich admin account (first visit).
 2. **Account settings → API keys → New API key.** Put it in `.env` as `IMMICH_API_KEY`.
 3. Create three albums: one for each frame and one shared by both. The phone app labels them
-   *Bunicii A*, *Bunicii B* and *Ambele*; the Immich names can be anything.
+   *Frame A*, *Frame B* and *Both* (in Romanian *Bunicii A*, *Bunicii B*, *Ambele*); the Immich
+   names can be anything. To show your own names instead, set `IMMICH_ALBUM_A_LABEL`,
+   `IMMICH_ALBUM_B_LABEL` and `IMMICH_ALBUM_ALL_LABEL` in `.env`.
 
 Get the album ids and put them in `.env`:
 
@@ -203,7 +205,7 @@ procedure.
 The login screen shows one button per family member. The server deliberately does not list
 usernames, so the buttons come from `DEFAULT_ACCOUNTS` near the top of
 `signalling/public/admin/app.js`: change it to your usernames and labels and re-run `./deploy.sh`.
-The *Altcineva* ("someone else") button lets anyone type a username instead.
+The *Someone else* button lets anyone type a username instead.
 
 ## 7. Seed the photos (optional)
 
@@ -315,12 +317,13 @@ Send everyone the same link:
 https://your-machine.your-tailnet.ts.net/admin/
 ```
 
-They log in with the username and passphrase from step 6, then use **Share → Add to Home Screen**
+The app follows the phone's language (English or Romanian); it can be switched in the account
+menu. They log in with the username and passphrase from step 6, then use **Share → Add to Home Screen**
 so it opens as an app. On each phone, check:
 
-1. **Poze** (photos): the photos appear and the album tabs work.
-2. **Incarca** (upload): pick several photos, choose a frame, and they appear under **Poze**.
-3. **Apel video** (video call): press **Suna**, the tablet rings, answer it. The browser asks for
+1. **Photos**: the photos appear and the album tabs work.
+2. **Upload**: pick several photos, choose a frame, and they appear under **Photos**.
+3. **Video call**: press **Call**, the tablet rings, answer it. The browser asks for
    camera and microphone permission once per phone, and it must be allowed; a refusal is silent
    afterwards.
 

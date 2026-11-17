@@ -206,7 +206,7 @@ function listEnv(name, fallback = '') {
 
 /**
  * The three curated albums, given stable keys the admin UI can address:
- *   a   -> "Bunici A"   b   -> "Bunici B"   all -> "Toti"
+ *   a   -> frame A's album   b -> frame B's album   all -> the album shown on both
  *
  * IMMICH_ALBUM_A / _B / _ALL are the explicit form. If they are unset we fall back to the
  * positional order of the existing IMMICH_ALBUM_IDS, which is what is deployed today, and log
@@ -214,21 +214,29 @@ function listEnv(name, fallback = '') {
  */
 function buildAlbumConfig() {
   const explicit = [
-    ['a', process.env.IMMICH_ALBUM_A, process.env.IMMICH_ALBUM_A_LABEL || 'Bunici A'],
-    ['b', process.env.IMMICH_ALBUM_B, process.env.IMMICH_ALBUM_B_LABEL || 'Bunici B'],
-    ['all', process.env.IMMICH_ALBUM_ALL, process.env.IMMICH_ALBUM_ALL_LABEL || 'Toti'],
+    ['a', process.env.IMMICH_ALBUM_A, process.env.IMMICH_ALBUM_A_LABEL],
+    ['b', process.env.IMMICH_ALBUM_B, process.env.IMMICH_ALBUM_B_LABEL],
+    ['all', process.env.IMMICH_ALBUM_ALL, process.env.IMMICH_ALBUM_ALL_LABEL],
   ]
     .filter(([, id]) => typeof id === 'string' && id.trim())
-    .map(([key, id, label]) => ({ key, id: id.trim(), label }));
+    // customLabel: the deployer chose this name explicitly (IMMICH_ALBUM_*_LABEL), so the
+    // phone app shows it as-is. Otherwise the app shows its own name for the key, in the
+    // user's language.
+    .map(([key, id, label]) => ({
+      key,
+      id: id.trim(),
+      label: (label && label.trim()) || key,
+      customLabel: Boolean(label && label.trim()),
+    }));
 
   if (explicit.length) return explicit;
 
   const positional = ['a', 'b', 'all'];
-  const labels = ['Bunici A', 'Bunici B', 'Toti'];
   return CONFIG.immichAlbumIds.map((id, i) => ({
     key: positional[i] || `album${i + 1}`,
     id,
-    label: labels[i] || `Album ${i + 1}`,
+    label: positional[i] || `Album ${i + 1}`,
+    customLabel: false,
   }));
 }
 
@@ -2057,25 +2065,25 @@ const BUILTIN_LOGIN = {
   '/login.html': {
     type: 'text/html; charset=utf-8',
     body: `<!doctype html>
-<html lang="ro">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
-<title>Rama foto - autentificare</title>
+<title>Photo frame - log in</title>
 <link rel="stylesheet" href="/login.css">
 </head>
 <body>
 <main class="card">
-  <h1>Rama foto</h1>
-  <p class="sub">Introdu parola pentru a continua.</p>
+  <h1 data-t="title">Photo frame</h1>
+  <p class="sub" data-t="sub">Enter your password to continue.</p>
   <form id="login-form" autocomplete="on">
-    <label for="username">Utilizator <span class="opt">(optional)</span></label>
+    <label for="username"><span data-t="user">Username</span> <span class="opt" data-t="optional">(optional)</span></label>
     <input id="username" name="username" type="text" autocomplete="username"
            autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text">
-    <label for="password">Parola</label>
+    <label for="password" data-t="password">Password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required>
-    <button id="submit" type="submit">Intra</button>
+    <button id="submit" type="submit" data-t="submit">Log in</button>
   </form>
   <p id="message" role="status" aria-live="polite"></p>
 </main>
@@ -2115,6 +2123,30 @@ button[disabled] { opacity:.55; }
   var message = document.getElementById('message');
   var submit = document.getElementById('submit');
 
+  // Same language rule as the phone app: ?lang=, then the saved choice, then the browser.
+  var STRINGS = {
+    en: { doc: 'Photo frame - log in', title: 'Photo frame', sub: 'Enter your password to continue.',
+          user: 'Username', optional: '(optional)', password: 'Password', submit: 'Log in',
+          checking: 'Checking...', welcome: 'Welcome!', tooMany: 'Too many attempts. Wait 15 minutes.',
+          wrong: 'Wrong password.', network: 'Could not connect. Try again.' },
+    ro: { doc: 'Rama foto - autentificare', title: 'Rama foto', sub: 'Introdu parola pentru a continua.',
+          user: 'Utilizator', optional: '(optional)', password: 'Parola', submit: 'Intra',
+          checking: 'Se verifica...', welcome: 'Bine ai venit!', tooMany: 'Prea multe incercari. Asteapta 15 minute.',
+          wrong: 'Parola gresita.', network: 'Conexiune esuata. Incearca din nou.' }
+  };
+  var lang = (function () {
+    var q = new URLSearchParams(window.location.search).get('lang');
+    if (q === 'en' || q === 'ro') return q;
+    try { var saved = localStorage.getItem('admin.lang'); if (saved === 'en' || saved === 'ro') return saved; } catch (e) {}
+    return /^ro(-|_|$)/i.test(navigator.language || '') ? 'ro' : 'en';
+  })();
+  var T = STRINGS[lang];
+  document.documentElement.lang = lang;
+  document.title = T.doc;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-t]'), function (el) {
+    var k = el.getAttribute('data-t'); if (T[k]) el.textContent = T[k];
+  });
+
   function nextTarget() {
     var raw = new URLSearchParams(window.location.search).get('next') || '/';
     // Same rule the server applies: one leading slash, no scheme, no protocol-relative URL.
@@ -2128,7 +2160,7 @@ button[disabled] { opacity:.55; }
     if (!password) return;
     submit.disabled = true;
     message.className = 'ok';
-    message.textContent = 'Se verifica...';
+    message.textContent = T.checking;
 
     var payload = { password: password };
     if (username) payload.username = username;
@@ -2145,18 +2177,18 @@ button[disabled] { opacity:.55; }
     }).then(function (result) {
       if (result.status === 200) {
         message.className = 'ok';
-        message.textContent = 'Bine ai venit!';
+        message.textContent = T.welcome;
         window.location.replace(nextTarget());
         return;
       }
       submit.disabled = false;
       message.className = '';
-      if (result.status === 429) message.textContent = 'Prea multe incercari. Asteapta 15 minute.';
-      else message.textContent = 'Parola gresita.';
+      if (result.status === 429) message.textContent = T.tooMany;
+      else message.textContent = T.wrong;
     }).catch(function () {
       submit.disabled = false;
       message.className = '';
-      message.textContent = 'Conexiune esuata. Incearca din nou.';
+      message.textContent = T.network;
     });
   });
 })();

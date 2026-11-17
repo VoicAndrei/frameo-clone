@@ -82,8 +82,10 @@ adb shell settings put global stay_on_while_plugged_in 7
 Each frame loads one URL, with its id and token from `~/frameo/config/roster.json` on the server:
 
 ```
-https://your-machine.your-tailnet.ts.net/?device=frame-a&token=<frame-a's authToken>
+https://your-machine.your-tailnet.ts.net/?device=frame-a&token=<frame-a's authToken>&lang=en
 ```
+
+`lang` is `en` or `ro`. Without it the frame follows the tablet's language setting.
 
 Use the MagicDNS name, never a `100.x` IP: an IP is not a secure origin, and the browser would
 silently refuse the camera.
@@ -142,7 +144,7 @@ minute, brings Tailscale back when it drops, and sends the server a heartbeat.
 
 1. Reboot the tablet (`adb reboot`). It should come back to the photos with no taps, five times
    in a row.
-2. Call the frame from the phone app. It should ring, and the green **RĂSPUNDE** (answer) button
+2. Call the frame from the phone app. It should ring, and the green **ANSWER** button
    should connect the call.
 3. Unplug the server's network cable for a minute. The frame should keep showing photos from its
    cache, with no error on screen.

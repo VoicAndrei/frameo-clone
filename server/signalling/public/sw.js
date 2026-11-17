@@ -14,8 +14,8 @@
 
 'use strict';
 
-var VERSION      = 'v7';   /* bumped: clock-stamp scrim box removed, NU ACUM label
-                              no longer overflows its button (style.css).
+var VERSION      = 'v8';   /* bumped: English UI added (?lang=en|ro, app.js
+                              STRINGS; data-i18n attributes in index.html).
                               MUST match the ?v= on the asset URLs in
                               index.html — see the comment on its <link>. */
 var SHELL_CACHE  = 'rama-shell-' + VERSION;

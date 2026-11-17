@@ -875,6 +875,22 @@ body.has-banner.has-strip .main { padding-top: calc(var(--topbar-h) + var(--sat)
   margin-top: -4px;
   margin-bottom: 12px;
 }
+/* Small text link under the sheet buttons (the language switch). */
+.sheet-link {
+  align-self: center;
+  min-height: 44px;
+  margin-top: 4px;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 15px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
 
 /* ---------------------------------------------------------------------------
    Call UI

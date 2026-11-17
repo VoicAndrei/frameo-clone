@@ -2,7 +2,7 @@
 <html lang="ro">
 <head>
 <meta charset="utf-8">
-<title>Rama</title>
+<title data-i18n="title">Rama</title>
 <!--
   Tablet-facing UI for the self-hosted photo frame + video phone.
   Target device: 11" 1920x1200 Android tablet, landscape, kiosk mode (Fully Kiosk / FreeKiosk).
@@ -27,7 +27,7 @@
      `public, max-age=300` in the HTTP cache. A new URL has no entry in either.
      index.html itself is served `no-cache`, so it is always fresh.
      KEEP IN SYNC with VERSION in sw.js, which derives the same query. -->
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 <script>
 /*
  * Runtime configuration.
@@ -185,11 +185,11 @@ window.FRAME_CONFIG = {
   <div class="actions actions-ring">
     <button type="button" class="btn btn-answer" id="btn-answer">
       <svg class="btn-icon"><use href="#ic-answer"></use></svg>
-      <span class="btn-label">RASPUNDE</span>
+      <span class="btn-label" data-i18n="answer">RASPUNDE</span>
     </button>
     <button type="button" class="btn btn-decline" id="btn-decline">
       <svg class="btn-icon"><use href="#ic-hangup"></use></svg>
-      <span class="btn-label">NU ACUM</span>
+      <span class="btn-label" data-i18n="notNow">NU ACUM</span>
     </button>
   </div>
 </section>
@@ -207,7 +207,7 @@ window.FRAME_CONFIG = {
   <div class="actions actions-single">
     <button type="button" class="btn btn-answer" id="btn-undo-answer">
       <svg class="btn-icon"><use href="#ic-answer"></use></svg>
-      <span class="btn-label">RASPUNDE</span>
+      <span class="btn-label" data-i18n="answer">RASPUNDE</span>
     </button>
   </div>
   <div class="countdown" id="undo-countdown"><i></i></div>
@@ -221,7 +221,7 @@ window.FRAME_CONFIG = {
   <div class="tiles" id="tiles"><!-- built by app.js --></div>
   <button type="button" class="btn btn-back" id="btn-back">
     <svg class="btn-icon"><use href="#ic-photos"></use></svg>
-    <span class="btn-label">Inapoi la poze</span>
+    <span class="btn-label" data-i18n="backToPhotos">Inapoi la poze</span>
   </button>
 </section>
 
@@ -239,7 +239,7 @@ window.FRAME_CONFIG = {
   <div class="actions actions-single">
     <button type="button" class="btn btn-stop" id="btn-dial-stop">
       <svg class="btn-icon"><use href="#ic-stop"></use></svg>
-      <span class="btn-label">Opreste</span>
+      <span class="btn-label" data-i18n="stop">Opreste</span>
     </button>
   </div>
   <div class="countdown" id="dial-countdown"><i></i></div>
@@ -265,19 +265,19 @@ window.FRAME_CONFIG = {
   <video id="self-video" class="self-video" autoplay playsinline muted></video>
 
   <div class="reconnect-band" id="reconnect-band">
-    <span class="band-text">Se reconecteaza...</span>
+    <span class="band-text" data-i18n="reconnecting">Se reconecteaza...</span>
   </div>
 
   <button type="button" class="btn btn-hangup" id="btn-hangup">
     <svg class="btn-icon"><use href="#ic-hangup"></use></svg>
-    <span class="btn-label">INCHIDE</span>
+    <span class="btn-label" data-i18n="hangUp">INCHIDE</span>
   </button>
 </section>
 
 <!-- ========================= POST CALL ===================================== -->
 <section id="screen-post" class="screen screen-message" data-state="post">
   <div class="message-card">
-    <p class="message-line">Convorbirea s-a incheiat.</p>
+    <p class="message-line" data-i18n="callEnded">Convorbirea s-a incheiat.</p>
   </div>
 </section>
 
@@ -304,8 +304,8 @@ window.FRAME_CONFIG = {
      ========================================================================= -->
 <section id="screen-fault" class="screen screen-message" data-state="fault">
   <div class="message-card">
-    <p class="message-line">Rama se repara singura.</p>
-    <p class="message-line message-sub">Nu trebuie sa faci nimic.</p>
+    <p class="message-line" data-i18n="faultTitle">Rama se repara singura.</p>
+    <p class="message-line message-sub" data-i18n="faultSub">Nu trebuie sa faci nimic.</p>
   </div>
 </section>
 
@@ -349,6 +349,6 @@ window.FRAME_CONFIG = {
   <div class="mm-gap"><span>27</span></div>
 </div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

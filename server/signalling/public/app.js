@@ -77,6 +77,106 @@
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
   }
 
+  /* ==========================================================================
+   * 0b. Language
+   * --------------------------------------------------------------------------
+   * Decided ONCE at startup, never switched at runtime:
+   *   1. ?lang=en | ?lang=ro   wins, and is persisted to localStorage
+   *                            (frame.lang) like ?device= / ?token=, so the
+   *                            kiosk URL only needs it once;
+   *   2. else the persisted frame.lang;
+   *   3. else the device language: navigator.language "ro*" -> ro, else en.
+   *
+   * Every user-visible string goes through t(). The Romanian text is exactly
+   * the original wording and deliberately has NO diacritics. English is
+   * written for the same audience: short, plain, warm, no technical words.
+   * Button labels are kept about as long as the Romanian ones so the mm-based
+   * button boxes (answer 120 mm, decline 55 mm, hang-up 62 mm) still fit.
+   * Placeholders are {name}-style. Missing key -> English -> the key itself.
+   * ======================================================================== */
+
+  var STRINGS = {
+    en: {
+      title:        'Photo Frame',
+      answer:       'ANSWER',
+      notNow:       'NOT NOW',
+      backToPhotos: 'Back to photos',
+      stop:         'Stop',
+      hangUp:       'HANG UP',
+      reconnecting: 'Connecting again...',
+      callEnded:    'The call has ended.',
+      faultTitle:   'The frame is fixing itself.',
+      faultSub:     'You don\'t need to do anything.',
+      isCalling:    '{name} is calling',
+      calling:      'Calling {name}...',
+      missed:       '{name} called',
+      unavailable:  '{name} can\'t answer right now.'
+    },
+    ro: {
+      title:        'Rama',
+      answer:       'RASPUNDE',
+      notNow:       'NU ACUM',
+      backToPhotos: 'Inapoi la poze',
+      stop:         'Opreste',
+      hangUp:       'INCHIDE',
+      reconnecting: 'Se reconecteaza...',
+      callEnded:    'Convorbirea s-a incheiat.',
+      faultTitle:   'Rama se repara singura.',
+      faultSub:     'Nu trebuie sa faci nimic.',
+      isCalling:    '{name} te suna',
+      calling:      'Suna pe {name}...',
+      missed:       '{name} a sunat',
+      unavailable:  '{name} nu poate raspunde acum.'
+    }
+  };
+
+  /* Locale for the clock stamp's date. Both render 24-hour time. */
+  var LOCALES = { en: 'en-GB', ro: 'ro-RO' };
+
+  function normLang(v) {
+    v = String(v == null ? '' : v).toLowerCase();
+    if (v.indexOf('ro') === 0) return 'ro';
+    if (v.indexOf('en') === 0) return 'en';
+    return null;
+  }
+
+  var LANG = (function pickLang() {
+    var fromUrl = normLang(Q.get('lang'));
+    if (fromUrl) { lsSet('frame.lang', fromUrl); return fromUrl; }
+    var saved = normLang(lsGet('frame.lang', null));
+    if (saved) return saved;
+    var dev = '';
+    try { dev = navigator.language || (navigator.languages && navigator.languages[0]) || ''; } catch (e) {}
+    return String(dev).toLowerCase().indexOf('ro') === 0 ? 'ro' : 'en';
+  })();
+
+  function t(key, vars) {
+    var table = STRINGS[LANG] || STRINGS.en;
+    var s = table[key];
+    if (s == null) s = STRINGS.en[key];
+    if (s == null) s = key;
+    if (!vars) return s;
+    return s.replace(/\{(\w+)\}/g, function (m, k) {
+      return Object.prototype.hasOwnProperty.call(vars, k) && vars[k] != null ? String(vars[k]) : m;
+    });
+  }
+
+  /* Overwrite the Romanian text baked into index.html. The HTML keeps it so
+   * nothing is ever blank if this script is slow; this runs before the first
+   * State.go(). Supported: data-i18n (text), data-i18n-aria (aria-label),
+   * data-i18n-title (title attribute). <title> carries data-i18n too. */
+  function applyStrings() {
+    document.documentElement.lang = LANG;
+    var nodes = document.querySelectorAll('[data-i18n], [data-i18n-aria], [data-i18n-title]');
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i], k;
+      if ((k = n.getAttribute('data-i18n'))) n.textContent = t(k);
+      if ((k = n.getAttribute('data-i18n-aria'))) n.setAttribute('aria-label', t(k));
+      if ((k = n.getAttribute('data-i18n-title'))) n.setAttribute('title', t(k));
+    }
+    document.title = t('title');
+  }
+
   /* Named timers, cleared wholesale on every state change so no stale timeout
    * can ever yank the screen out from under the user. */
   var Timers = {
@@ -1583,17 +1683,17 @@
         case 'dial':
           this.peer = opts.peer;
           paintPerson(SCREENS.dial, this.peer);
-          el.dialName.textContent = 'Suna pe ' + this.peer.name + '...';
+          el.dialName.textContent = t('calling', { name: this.peer.name });
 
           /* Button starts as the 3 s undo, then becomes the hang-up. */
           el.btnDialStop.classList.remove('is-hangup');
-          el.btnDialStop.querySelector('.btn-label').textContent = 'Opreste';
+          el.btnDialStop.querySelector('.btn-label').textContent = t('stop');
           el.btnDialStop.querySelector('use').setAttribute('href', '#ic-stop');
           el.btnDialStop.dataset.mode = 'undo';
           runCountdown(el.dialCountdown, CFG.dialUndoMs);
           Timers.set('dial-undo', CFG.dialUndoMs, function () {
             el.btnDialStop.classList.add('is-hangup');
-            el.btnDialStop.querySelector('.btn-label').textContent = 'INCHIDE';
+            el.btnDialStop.querySelector('.btn-label').textContent = t('hangUp');
             el.btnDialStop.querySelector('use').setAttribute('href', '#ic-hangup');
             el.btnDialStop.dataset.mode = 'hangup';
             el.dialCountdown.classList.remove('is-running');
@@ -1610,7 +1710,7 @@
         case 'ring':
           this.peer = opts.peer;
           paintPerson(SCREENS.ring, this.peer);
-          el.ringName.textContent = this.peer.name + ' te suna';
+          el.ringName.textContent = t('isCalling', { name: this.peer.name });
           Guard.lock(CFG.ringArmMs);              /* both buttons inert 800 ms */
           armActions(SCREENS.ring, CFG.ringArmMs);
           Ringer.start();
@@ -1624,7 +1724,7 @@
         case 'undo':
           this.peer = opts.peer || this.peer;
           paintPerson(SCREENS.undo, this.peer);
-          el.undoName.textContent = this.peer.name + ' te suna';
+          el.undoName.textContent = t('isCalling', { name: this.peer.name });
           runCountdown(el.undoCountdown, CFG.declineUndoMs);
           armActions(SCREENS.undo, 400);
           Timers.set('undo-timeout', CFG.declineUndoMs, function () {
@@ -1665,7 +1765,7 @@
           this.peer = opts.peer || this.peer;
           Call.reset();
           paintPerson(SCREENS.missed, this.peer);
-          el.missedName.textContent = (this.peer ? this.peer.name : '') + ' a sunat';
+          el.missedName.textContent = t('missed', { name: this.peer ? this.peer.name : '' });
           Timers.set('missed', CFG.missedMs, function () { self.go('idle'); });
           break;
 
@@ -1674,7 +1774,7 @@
           this.peer = opts.peer || this.peer;
           Call.reset();
           paintPerson(SCREENS.unavail, this.peer);
-          el.unavailName.textContent = (this.peer ? this.peer.name : '') + ' nu poate raspunde acum.';
+          el.unavailName.textContent = t('unavailable', { name: this.peer ? this.peer.name : '' });
           Timers.set('unavail', CFG.unavailMs, function () { self.go('idle'); });
           break;
 
@@ -2070,9 +2170,11 @@
       if (dateEl) {
         var txt = '';
         try {
-          /* "9 aug." — Romanian, no weekday: the weekday adds a diacritic and
-           * a third of the width for information nobody reads off a frame. */
-          txt = now.toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' });
+          /* "9 aug." (ro-RO) / "9 Aug" (en-GB), no weekday: the weekday adds
+           * a diacritic and a third of the width for information nobody reads
+           * off a frame. The time above is formatted by hand as 24-hour HH:MM
+           * in both languages. */
+          txt = now.toLocaleDateString(LOCALES[LANG] || 'en-GB', { day: 'numeric', month: 'short' });
         } catch (e) {
           txt = now.getDate() + '.' + (now.getMonth() + 1);
         }
@@ -2145,6 +2247,7 @@
   };
 
   function boot() {
+    applyStrings();               /* before the first screen is shown */
     Metrics.compute();
     window.addEventListener('resize', function () { Metrics.compute(); });
     window.addEventListener('orientationchange', function () { Metrics.compute(); });

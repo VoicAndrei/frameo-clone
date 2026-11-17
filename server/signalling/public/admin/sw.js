@@ -6,7 +6,8 @@
  *   1. Installability. Android Chrome only offers "Add to home screen" for a
  *      page with a manifest AND a service worker that handles fetch.
  *   2. A usable shell on a bad connection: the HTML/CSS/JS load from cache and
- *      the app then explains, in Romanian, that the server is unreachable.
+ *      the app then explains, in the user's language, that the server is
+ *      unreachable.
  *
  * What it deliberately does NOT do:
  *
@@ -21,7 +22,7 @@
 
 'use strict';
 
-var VERSION = 'admin-v2';   /* bumped: per-socket call routing + ICE restart hardening */
+var VERSION = 'admin-v3';   /* bumped: English version (STRINGS dictionary, data-i18n in index.html) */
 var SHELL = 'rama-admin-shell-' + VERSION;
 
 var SHELL_ASSETS = [
@@ -84,7 +85,8 @@ self.addEventListener('fetch', function (event) {
         }).then(function (hit) {
           return hit || new Response(
             '<!doctype html><meta charset="utf-8"><title>Rama</title>' +
-            '<p>Nu am internet acum. Incearca din nou peste putin timp.</p>',
+            '<p>Nu am internet acum. Incearca din nou peste putin timp.</p>' +
+            '<p lang="en">No internet right now. Try again in a little while.</p>',
             { headers: { 'content-type': 'text/html; charset=utf-8' } }
           );
         });

@@ -10,21 +10,21 @@ with one big green button. The grandparents never install, update, log in to or 
 anything.
 
 > **Status:** a working reference build, not a maintained product. It has run daily since August
-> 2026 on one server and one Samsung Galaxy Tab A9+. The interface is in Romanian (see
-> [Limitations](#limitations)).
+> 2026 on one server and one Samsung Galaxy Tab A9+. The interface is in English and Romanian
+> (see [Languages](#languages)).
 
 | The frame, showing photos | Someone is calling |
 |---|---|
-| ![The frame showing a photo with the clock and weather](docs/images/frame-idle.jpg) | ![Incoming call: "Ana te suna" with a large green RASPUNDE button and a smaller red NU ACUM button](docs/images/frame-ringing.png) |
-| **After a wrong "not now": 5 seconds to answer anyway** | **The only failure screen: "The frame is fixing itself. You don't need to do anything."** |
+| ![The frame showing a photo with the clock and weather](docs/images/frame-idle.jpg) | ![Incoming call: "Ana is calling" with a large green ANSWER button and a smaller red NOT NOW button](docs/images/frame-ringing.png) |
+| **After a wrong "not now": 5 seconds to answer anyway** | **The only failure screen** |
 | ![After declining, only the answer button stays on screen for 5 seconds](docs/images/frame-decline-undo.png) | ![Fault screen](docs/images/frame-fault.png) |
 
 | Family app: login | Family app: photos |
 |---|---|
 | <img src="docs/images/admin-login.png" width="280" alt="Login screen with one button per family member"> | <img src="docs/images/admin-photos.png" width="280" alt="Photo gallery with tabs for each frame"> |
 
-<sub>Screenshots are from the real web apps in a desktop browser, with generated sample images instead
-of family photos.</sub>
+<sub>Screenshots are from the real web apps in a desktop browser, in English (Romanian is the other
+built-in language), with generated sample images instead of family photos.</sub>
 
 ## Why
 
@@ -100,6 +100,12 @@ change is needed.
 - **No error messages.** If something breaks, the frame shows one calm line ("The frame is fixing
   itself. You don't need to do anything.") and repairs itself in the background.
 
+## Languages
+
+The frame and the phone app are in English and Romanian. Each device picks Romanian when its own
+language is Romanian, and English otherwise. To choose explicitly, add `&lang=en` or `&lang=ro` to
+the frame's kiosk URL (it is remembered), or switch it in the phone app's account menu.
+
 ## Getting started
 
 1. Set up the server: [INSTALL.md](INSTALL.md).
@@ -117,8 +123,8 @@ signalling 512m + coturn 128m.
 
 ## Limitations
 
-- **Romanian-only interface.** The text on the frame and in the phone app is hardcoded in Romanian
-  in `server/signalling/public/` and `public/admin/`. Translating means editing those files.
+- **Two languages only**, English and Romanian. Adding one means adding a column to the
+  `STRINGS` table in `public/app.js` and `public/admin/app.js`.
 - **Built around Tailscale Funnel.** There is no setup for a plain reverse proxy or your own
   domain.
 - **Tested on one tablet model** (Samsung Galaxy Tab A9+) and one server.

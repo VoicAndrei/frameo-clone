@@ -1,7 +1,7 @@
 {
-  "name": "Rama familiei",
-  "short_name": "Rama",
-  "description": "Pozele si apelurile video pentru ramele bunicilor.",
+  "name": "Family frame",
+  "short_name": "Family frame",
+  "description": "Photos and video calls for the grandparents' frames.",
   "id": "/admin/",
   "start_url": "/admin/",
   "scope": "/admin/",
@@ -9,7 +9,7 @@
   "orientation": "portrait",
   "background_color": "#14100E",
   "theme_color": "#14100E",
-  "lang": "ro",
+  "lang": "en",
   "dir": "ltr",
   "categories": ["photo", "social", "utilities"],
   "icons": [

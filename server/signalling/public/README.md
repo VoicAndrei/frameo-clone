@@ -125,7 +125,21 @@ Inapoi la poze                 Opreste                     Suna pe <Nume>...
 Rama se repara singura.        Nu trebuie sa faci nimic.
 ```
 
-The words *eroare, conexiune, server, retea*, any error code and any stack
+English (`?lang=en`, see §7 *Language*):
+
+```
+<Name> is calling              ANSWER                      NOT NOW
+<Name> called                  HANG UP                     Back to photos
+Stop                           Calling <Name>...           <Name> can't answer right now.
+Connecting again...            The call has ended.         The frame is fixing itself.
+You don't need to do anything.
+```
+
+Both sets live in one dictionary, `STRINGS` at the top of `app.js`, with
+identical keys; every visible string goes through `t(key, { name })`.
+
+The words *eroare, conexiune, server, retea* (in English: *error, connection,
+server, network*), any error code and any stack
 trace are never rendered under any circumstance. Network and server failures
 are swallowed into the console (debug builds only) and, at worst, into the
 self-healing fault screen. There is an automated audit for this — see §5.
@@ -399,3 +413,21 @@ Two worth calling out when deploying to a different tablet:
 - **`pxPerMm`** — a hard override for when the reported `screen` dimensions
   cannot be trusted. Measure a known-width element on the glass with a ruler
   and set it directly.
+
+### Language
+
+The UI is Romanian or English, decided once at page load:
+
+1. `?lang=ro` or `?lang=en` in the URL wins and is saved to `localStorage`
+   (`frame.lang`), like `device` / `token`, so the kiosk URL needs it once:
+   `https://<magicdns>/?device=frame-a&token=<authToken>&lang=en`;
+2. otherwise the saved `frame.lang`;
+3. otherwise the tablet's language: `navigator.language` starting with `ro`
+   gives Romanian, anything else gives English.
+
+It sets `<html lang>`, every text in `index.html` marked `data-i18n`
+(`data-i18n-aria` / `data-i18n-title` for attributes), the strings set from
+`app.js`, and the clock-stamp date (`ro-RO` "17 nov." / `en-GB` "17 Nov";
+the time is 24-hour in both). The Romanian text stays in `index.html` so the
+page is never blank before the script runs. A key missing from one language
+falls back to English, then to the key name. The debug harness is English only.

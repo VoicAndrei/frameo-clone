@@ -365,7 +365,8 @@ function createImmich(deps) {
       return {
         key: a.key,
         id: a.id,
-        name: (meta && meta.name) || a.label || a.key,
+        name: a.customLabel ? a.label : ((meta && meta.name) || a.label || a.key),
+        customName: Boolean(a.customLabel),
         count: items ? items.size : (meta && meta.assetCount) || 0,
       };
     });

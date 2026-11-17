@@ -7,7 +7,7 @@
  * Hard rules this file obeys:
  *   - No inline script, no inline style, no CDN. The CSP forbids all three.
  *   - No raw error text ever reaches the screen. Everything goes through
- *     `humanError()` and comes out as one calm Romanian sentence.
+ *     `humanError()` and comes out as one calm sentence (English or Romanian).
  *   - The UI never blocks. Uploads run in the background across screen
  *     switches; a dead network shows a banner and keeps retrying.
  *   - Server-side truth wins: the roster decides who may be called, the
@@ -64,16 +64,538 @@
 
   function clamp(n, lo, hi) { return n < lo ? lo : (n > hi ? hi : n); }
 
-  function plural(n, one, few, many) {
-    // Romanian: 1 poza / 2..19 poze / 20+ de poze
+  /* =========================================================================
+   * 0b. Language (English / Romanian)
+   * =========================================================================
+   * Decided ONCE at startup, never switched live (the switch in the account
+   * sheet saves the choice and reloads):
+   *   1. ?lang=en / ?lang=ro in the URL wins and is saved to localStorage;
+   *   2. else the saved `admin.lang`;
+   *   3. else navigator.language starting with "ro" -> Romanian, else English.
+   *
+   * Romanian stays exactly as it was before this dictionary existed: plain
+   * ASCII, no diacritics. Both languages carry the same keys. A plural entry is
+   * an object of forms: English uses {one, other}, Romanian {one, few, many}
+   * (1 poza / 2..19 poze / 20+ de poze). Missing key -> English -> the key.
+   * ====================================================================== */
+
+  var LANG_KEY = 'admin.lang';
+  var LANGS = ['en', 'ro'];
+
+  var LANG = (function () {
+    var fromUrl = attempt(function () {
+      var m = /[?&]lang=([a-zA-Z-]+)/.exec(location.search || '');
+      return m ? m[1].toLowerCase() : '';
+    });
+    if (LANGS.indexOf(fromUrl) >= 0) {
+      attempt(function () { localStorage.setItem(LANG_KEY, fromUrl); });
+      return fromUrl;
+    }
+    var saved = attempt(function () { return localStorage.getItem(LANG_KEY); });
+    if (LANGS.indexOf(saved) >= 0) return saved;
+    var nav = String(navigator.language || (navigator.languages && navigator.languages[0]) || '');
+    return nav.toLowerCase().indexOf('ro') === 0 ? 'ro' : 'en';
+  }());
+
+  attempt(function () { document.documentElement.lang = LANG; });
+
+  var STRINGS = {
+    en: {
+      'app.title':            'Family frame',
+      'app.shortTitle':       'Family frame',
+      'app.description':      'Photos and video calls for the grandparents’ frames.',
+
+      'lang.switchLabel':     'Romana',
+      'lang.switchAria':      'Switch the app to Romanian',
+
+      'login.who':            'Who are you?',
+      'login.someoneElse':    'Someone else',
+      'login.accountName':    'Account name',
+      'login.password':       'Password',
+      'login.passwordHint':   'Your password',
+      'login.show':           'Show',
+      'login.hide':           'Hide',
+      'login.showPassword':   'Show password',
+      'login.hidePassword':   'Hide password',
+      'login.submit':         'Log in',
+      'login.busy':           'One moment...',
+      'login.foot':           'The family app · photos and video calls',
+      'login.needWho':        'First, tell me who you are.',
+      'login.needPassword':   'Type your password.',
+      'login.tooMany':        { one:   'Too many tries. Try again in {n} minute.',
+                                other: 'Too many tries. Try again in {n} minutes.' },
+      'login.noInternet':     'Can’t reach the server. Check your phone’s internet connection.',
+      'login.failed':         'Couldn’t log in. Try again in a minute.',
+      'boot.noServer':        'Couldn’t reach the server. Check the internet and reload.',
+      'boot.noCalls':         'Your account can’t make video calls yet.',
+
+      'err.invalidCredentials': 'That password isn’t right. Try again.',
+      'err.lockedOut':        'Too many wrong tries. Wait 15 minutes.',
+      'err.rateLimited':      'Too many tries. Wait 15 minutes.',
+      'err.csrf':             'Something got mixed up. Reload the page.',
+      'err.unauthenticated':  'You were logged out. Log in again with your password.',
+      'err.notImplemented':   'The server can’t do this yet.',
+      'err.payloadTooLarge':  'This photo is too big for the server.',
+      'err.unsupportedMedia': 'This photo’s format isn’t supported.',
+      'err.generic':          'Something went wrong. Try again.',
+      'err.network':          'Couldn’t reach the server. Check the internet.',
+      'err.server':           'The server has a problem. Try again in a few minutes.',
+
+      'album.a.name':         'Frame A',
+      'album.a.tab':          'Frame A',
+      'album.b.name':         'Frame B',
+      'album.b.tab':          'Frame B',
+      'album.all.name':       'Both frames',
+      'album.all.tab':        'Both',
+      'album.any.tab':        'All',
+      'album.shownOn':        'Shown on: {names}',
+      'album.unknown':        'Not sure which frame it’s on',
+
+      'tab.gallery':          'Photos',
+      'tab.upload':           'Upload',
+      'tab.call':             'Video call',
+      'title.gallery':        'Photos',
+      'title.upload':         'Upload photos',
+      'title.call':           'Video call',
+      'nav.main':             'Main menu',
+      'account.button':       'My account',
+
+      'gallery.filter':       'Filter photos',
+      'gallery.select':       'Select',
+      'gallery.done':         'Done',
+      'gallery.refresh':      'Refresh',
+      'gallery.emptyTitle':   'No photos here',
+      'gallery.emptyText':    'Tap <strong>Upload</strong> below and pick photos from your phone.',
+      'gallery.emptyUpload':  'Upload photos',
+      'gallery.loading':      'Loading photos…',
+      'gallery.errorTitle':   'Couldn’t load the photos',
+      'gallery.retry':        'Try again',
+      'gallery.legacyNote':   'For now the server shows all photos together, not split by frame.',
+      'gallery.moreFailed':   'Couldn’t load more photos.',
+      'gallery.loadFailed':   'Couldn’t load the photos.',
+      'gallery.countOf':      '{shown} of {total}',
+      'photos':               { one: '{n} photo', other: '{n} photos' },
+
+      'sel.none':             'Nothing selected',
+      'sel.count':            { one: '{n} selected', other: '{n} selected' },
+      'sel.delete':           'Delete',
+      'common.cancel':        'Cancel',
+
+      'viewer.label':         'Photo, full screen',
+      'viewer.close':         'Close',
+      'viewer.delete':        'Delete photo',
+      'viewer.prev':          'Previous photo',
+      'viewer.next':          'Next photo',
+      'viewer.photo':         'Photo',
+      'date.months':          'Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec',
+
+      'del.removeFrom':       'Remove from "{album}"',
+      'del.removeHint':       'The photo stays in the archive, but the frame no longer shows it.',
+      'del.permanent':        'Delete for good',
+      'del.permanentHint':    'It disappears from every frame and from the archive.',
+      'del.permanentHintFinal': 'It disappears from every frame and from the archive. This can’t be undone.',
+      'del.askTitle':         'What should I do with {what}?',
+      'del.askAlbum':         'You can just take them off the frame, or delete them completely.',
+      'del.askMixed':         'The selected photos are on different frames, so I can only delete them for good.',
+      'del.confirmTitle':     'Delete {what} for good?',
+      'del.confirmText':      'They can’t be brought back from the app.',
+      'del.confirmYes':       'Yes, delete for good',
+      'del.confirmNo':        'No, cancel',
+      'del.progress':         'Deleting {what}...',
+      'del.nothing':          'Couldn’t delete anything. Try again.',
+      'del.removed':          { one: '{what} removed from the frame.', other: '{what} removed from the frame.' },
+      'del.deleted':          { one: '{what} deleted.', other: '{what} deleted.' },
+      'del.unavailable':      'Deleting isn’t available on the server yet.',
+      'del.failed':           'Couldn’t delete the photos. Try again.',
+
+      'up.lead':              'Pick photos on your phone and send them to the grandparents’ frame.',
+      'up.step1':             '1. Where should the photos go?',
+      'up.albumAria':         'Choose the frame',
+      'up.step2':             '2. Pick the photos',
+      'up.pickerText':        'Pick photos from your phone',
+      'up.pickerHint':        'You can pick as many as you like',
+      'up.retryFailed':       'Try the failed photos again',
+      'up.clearList':         'Clear the list',
+      'up.seeGallery':        'See the photos',
+      'up.stop':              'Stop uploading',
+      'up.st.waiting':        'Waiting',
+      'up.st.notImage':       'Not a photo',
+      'up.st.tooBig':         'Too big',
+      'up.st.stopped':        'Stopped',
+      'up.st.duplicate':      'Already there',
+      'up.st.done':           'Done',
+      'up.st.session':        'Logged out',
+      'up.st.unavailable':    'Unavailable',
+      'up.st.format':         'Wrong format',
+      'up.st.tooFast':        'Too fast',
+      'up.st.failed':         'Failed',
+      'up.st.noNet':          'No internet',
+      'up.st.tooSlow':        'Too slow',
+      'up.skipped':           { one: '{n} file was skipped.', other: '{n} files were skipped.' },
+      'up.strip':             'Sending photos... {done} of {total}',
+      'up.allDone':           { one: 'Done! {what} is on the frame.', other: 'Done! {what} are on the frame.' },
+      'up.noneSent':          'None of the photos could be sent.',
+      'up.okPart':            { one: '{what} sent.', other: '{what} sent.' },
+      'up.failPart':          { one: '{n} failed.', other: '{n} failed.' },
+      'up.cantRetry':         'These photos can’t be sent.',
+      'up.waitRunning':       'Wait until the current uploads finish.',
+
+      'call.lead':            'Call the frame in your grandparents’ room. The frame rings out loud and shows two big buttons — they press the green <strong>ANSWER</strong> button. It rings for 45 seconds.',
+      'call.noFramesTitle':   'No frames set up',
+      'call.noFramesText':    'Your account doesn’t have any frames yet. Ask whoever set up the frame.',
+      'call.help':            'If a frame says <strong>Switched off</strong>, the tablet is off or has no internet.',
+      'frame.busy':           'On a call now',
+      'frame.online':         'On, ready for a call',
+      'frame.offline':        'Switched off',
+      'frame.call':           'Call {name}',
+      'frame.offlineHint':    'The frame isn’t answering. It may be off or without internet.',
+      'frame.default':        'The frame',
+
+      'call.uiLabel':         'Video call',
+      'call.relay':           'Connected through the server',
+      'call.mic':             'Mic',
+      'call.micOff':          'Muted',
+      'call.cam':             'Camera',
+      'call.camOff':          'Video off',
+      'call.flip':            'Flip',
+      'call.hangup':          'Hang up',
+      'call.noMedia':         'The phone didn’t allow the camera and microphone. You can see and hear them, but they can’t hear you.',
+      'call.weak':            'Weak signal, trying to reconnect...',
+      'call.lost':            'The connection couldn’t be restored.',
+      'call.notConnected':    'Not connected to the server. Waiting for the internet.',
+      'call.dialing':         'Calling...',
+      'call.ringing':         'Ringing the frame...',
+      'call.ringingNow':      'Ringing the frame... waiting for an answer',
+      'call.connecting':      'Connecting you...',
+      'call.startFailed':     'Couldn’t start the call.',
+      'call.incoming':        'Incoming call',
+      'call.callingYou':      'Calling you',
+      'call.answer':          'Answer',
+      'call.decline':         'Decline',
+      'call.declined':        'Call declined',
+      'call.answerFailed':    'Couldn’t answer the call.',
+      'call.linkFailed':      'Couldn’t connect the call.',
+      'call.flipFailed':      'Couldn’t find the other camera.',
+      'call.notAnswered':     '{name} didn’t answer the call.',
+      'call.cancelled':       'The call was cancelled.',
+      'call.ended':           'The call has ended.',
+      'call.missed':          'Nobody answered.',
+      'call.failed':          'The call couldn’t start.',
+      'call.interrupted':     'The call was cut off.',
+      'call.fail.calleeOffline': 'The frame isn’t on right now.',
+      'call.fail.callerOffline': 'I got disconnected. Try again.',
+      'call.fail.busy':       'The frame is already on a call with someone.',
+      'call.fail.notAllowed': 'Your account isn’t allowed to call this frame.',
+      'call.fail.serverBusy': 'The server is busy. Try again in a minute.',
+
+      'banner.offline':       'No internet. Waiting for it to come back.',
+      'banner.reconnecting':  'Reconnecting to the server...',
+      'banner.connecting':    'Connecting for calls...',
+
+      'account.connected':    'You’re connected. Photos and calls are working.',
+      'account.disconnected': 'Not connected to the server right now.',
+      'account.logout':       'Log out',
+      'account.logoutAll':    'Log out on all phones',
+      'account.logoutAllHint': 'Use this if you lost a phone.',
+      'account.back':         'Back'
+    },
+
+    ro: {
+      'app.title':            'Rama familiei',
+      'app.shortTitle':       'Rama',
+      'app.description':      'Pozele si apelurile video pentru ramele bunicilor.',
+
+      'lang.switchLabel':     'English',
+      'lang.switchAria':      'Schimba aplicatia in engleza',
+
+      'login.who':            'Cine esti?',
+      'login.someoneElse':    'Altcineva',
+      'login.accountName':    'Numele contului',
+      'login.password':       'Parola',
+      'login.passwordHint':   'Parola ta',
+      'login.show':           'Arata',
+      'login.hide':           'Ascunde',
+      'login.showPassword':   'Arata parola',
+      'login.hidePassword':   'Ascunde parola',
+      'login.submit':         'Intra',
+      'login.busy':           'Un moment...',
+      'login.foot':           'Aplicatia familiei · poze si apeluri video',
+      'login.needWho':        'Spune-mi intai cine esti.',
+      'login.needPassword':   'Scrie parola.',
+      'login.tooMany':        { one:  'Prea multe incercari. Mai incearca peste {n} minute.',
+                                few:  'Prea multe incercari. Mai incearca peste {n} minute.',
+                                many: 'Prea multe incercari. Mai incearca peste {n} minute.' },
+      'login.noInternet':     'Nu am internet spre server. Verifica conexiunea telefonului.',
+      'login.failed':         'Nu am putut intra. Mai incearca peste un minut.',
+      'boot.noServer':        'Nu am putut ajunge la server. Verifica internetul si reincarca.',
+      'boot.noCalls':         'Contul tau nu are inca acces la apeluri video.',
+
+      'err.invalidCredentials': 'Parola nu e buna. Mai incearca o data.',
+      'err.lockedOut':        'Prea multe incercari gresite. Asteapta un sfert de ora.',
+      'err.rateLimited':      'Prea multe incercari. Asteapta un sfert de ora.',
+      'err.csrf':             'Sesiunea s-a incurcat. Reincarca pagina.',
+      'err.unauthenticated':  'Sesiunea a expirat. Intra din nou cu parola.',
+      'err.notImplemented':   'Serverul nu stie inca sa faca asta.',
+      'err.payloadTooLarge':  'Poza e prea mare pentru server.',
+      'err.unsupportedMedia': 'Formatul acestei poze nu e acceptat.',
+      'err.generic':          'Ceva nu a mers. Mai incearca.',
+      'err.network':          'Nu am putut ajunge la server. Verifica internetul.',
+      'err.server':           'Serverul are o problema. Incearca peste cateva minute.',
+
+      'album.a.name':         'Bunicii A',
+      'album.a.tab':          'Bunicii A',
+      'album.b.name':         'Bunicii B',
+      'album.b.tab':          'Bunicii B',
+      'album.all.name':       'Ambele rame',
+      'album.all.tab':        'Ambele',
+      'album.any.tab':        'Toate',
+      'album.shownOn':        'Se vede pe: {names}',
+      'album.unknown':        'Nu stiu pe ce rama e',
+
+      'tab.gallery':          'Poze',
+      'tab.upload':           'Incarca',
+      'tab.call':             'Apel video',
+      'title.gallery':        'Poze',
+      'title.upload':         'Incarca poze',
+      'title.call':           'Apel video',
+      'nav.main':             'Meniu principal',
+      'account.button':       'Contul meu',
+
+      'gallery.filter':       'Filtreaza pozele',
+      'gallery.select':       'Selecteaza',
+      'gallery.done':         'Gata',
+      'gallery.refresh':      'Actualizeaza',
+      'gallery.emptyTitle':   'Nicio poza aici',
+      'gallery.emptyText':    'Apasa <strong>Incarca</strong> jos si alege poze din telefon.',
+      'gallery.emptyUpload':  'Incarca poze',
+      'gallery.loading':      'Se incarca pozele…',
+      'gallery.errorTitle':   'Nu am putut aduce pozele',
+      'gallery.retry':        'Mai incearca',
+      'gallery.legacyNote':   'Serverul imi arata deocamdata toate pozele la un loc, fara impartirea pe rame.',
+      'gallery.moreFailed':   'Nu am mai putut aduce poze.',
+      'gallery.loadFailed':   'Nu am putut aduce pozele.',
+      'gallery.countOf':      '{shown} din {total}',
+      'photos':               { one: '{n} poza', few: '{n} poze', many: '{n} de poze' },
+
+      'sel.none':             'Nimic selectat',
+      'sel.count':            { one: '{n} selectata', few: '{n} selectate', many: '{n} selectate' },
+      'sel.delete':           'Sterge',
+      'common.cancel':        'Renunta',
+
+      'viewer.label':         'Poza marita',
+      'viewer.close':         'Inchide',
+      'viewer.delete':        'Sterge poza',
+      'viewer.prev':          'Poza dinainte',
+      'viewer.next':          'Poza urmatoare',
+      'viewer.photo':         'Poza',
+      'date.months':          'ian,feb,mar,apr,mai,iun,iul,aug,sep,oct,noi,dec',
+
+      'del.removeFrom':       'Scoate de pe "{album}"',
+      'del.removeHint':       'Poza ramane in arhiva, dar nu se mai vede pe rama.',
+      'del.permanent':        'Sterge definitiv',
+      'del.permanentHint':    'Dispare de pe toate ramele si din arhiva.',
+      'del.permanentHintFinal': 'Dispare de pe toate ramele si din arhiva. Nu se poate anula.',
+      'del.askTitle':         'Ce fac cu {what}?',
+      'del.askAlbum':         'Poti doar sa le scoti de pe rama, sau sa le stergi cu totul.',
+      'del.askMixed':         'Pozele selectate sunt de pe mai multe rame, asa ca le pot doar sterge definitiv.',
+      'del.confirmTitle':     'Stergi definitiv {what}?',
+      'del.confirmText':      'Nu se mai pot recupera din aplicatie.',
+      'del.confirmYes':       'Da, sterge definitiv',
+      'del.confirmNo':        'Nu, renunta',
+      'del.progress':         'Sterg {what}...',
+      'del.nothing':          'Nu am putut sterge nimic. Mai incearca.',
+      'del.removed':          { one: '{what} scoasa de pe rama.', few: '{what} scoase de pe rama.', many: '{what} scoase de pe rama.' },
+      'del.deleted':          { one: '{what} stearsa.', few: '{what} sterse.', many: '{what} sterse.' },
+      'del.unavailable':      'Stergerea nu e inca disponibila pe server.',
+      'del.failed':           'Nu am putut sterge pozele. Mai incearca.',
+
+      'up.lead':              'Alege poze din telefon si trimite-le pe rama bunicilor.',
+      'up.step1':             '1. Unde sa apara pozele?',
+      'up.albumAria':         'Alege rama',
+      'up.step2':             '2. Alege pozele',
+      'up.pickerText':        'Alege poze din telefon',
+      'up.pickerHint':        'Poti alege oricate deodata',
+      'up.retryFailed':       'Mai incearca pozele nereusite',
+      'up.clearList':         'Goleste lista',
+      'up.seeGallery':        'Vezi pozele',
+      'up.stop':              'Opreste incarcarea',
+      'up.st.waiting':        'In asteptare',
+      'up.st.notImage':       'Nu e o poza',
+      'up.st.tooBig':         'Prea mare',
+      'up.st.stopped':        'Oprita',
+      'up.st.duplicate':      'Deja acolo',
+      'up.st.done':           'Gata',
+      'up.st.session':        'Sesiune',
+      'up.st.unavailable':    'Indisponibil',
+      'up.st.format':         'Format',
+      'up.st.tooFast':        'Prea repede',
+      'up.st.failed':         'Esuat',
+      'up.st.noNet':          'Fara net',
+      'up.st.tooSlow':        'Prea lent',
+      'up.skipped':           { one: '{n} fisier a fost sarit.', few: '{n} fisiere au fost sarite.', many: '{n} de fisiere au fost sarite.' },
+      'up.strip':             'Trimit pozele... {done} din {total}',
+      'up.allDone':           { one: 'Gata! {what} a ajuns pe rama.', few: 'Gata! {what} au ajuns pe rama.', many: 'Gata! {what} au ajuns pe rama.' },
+      'up.noneSent':          'Nicio poza nu a putut fi trimisa.',
+      'up.okPart':            { one: '{what} a ajuns.', few: '{what} au ajuns.', many: '{what} au ajuns.' },
+      'up.failPart':          { one: '{n} nu a mers.', few: '{n} nu au mers.', many: '{n} nu au mers.' },
+      'up.cantRetry':         'Pozele astea nu pot fi trimise.',
+      'up.waitRunning':       'Astept sa se termine ce e in lucru.',
+
+      'call.lead':            'Suna direct pe rama din camera bunicilor. Rama va suna cu glas tare si va afisa doua butoane mari — bunicii apasa butonul verde <strong>RASPUNDE</strong>. Suna 45 de secunde.',
+      'call.noFramesTitle':   'Nicio rama configurata',
+      'call.noFramesText':    'Contul tau nu are inca ramele in lista. Spune-i celui care a instalat rama.',
+      'call.help':            'Daca rama scrie <strong>Nu e pornita</strong>, inseamna ca tableta e stinsa sau nu are internet.',
+      'frame.busy':           'Vorbeste acum',
+      'frame.online':         'Pornita, gata de apel',
+      'frame.offline':        'Nu e pornita',
+      'frame.call':           'Suna {name}',
+      'frame.offlineHint':    'Rama nu raspunde. Poate e stinsa sau nu are internet.',
+      'frame.default':        'Rama',
+
+      'call.uiLabel':         'Apel video',
+      'call.relay':           'Conexiune prin server',
+      'call.mic':             'Microfon',
+      'call.micOff':          'Fara sunet',
+      'call.cam':             'Camera',
+      'call.camOff':          'Fara video',
+      'call.flip':            'Intoarce',
+      'call.hangup':          'Inchide',
+      'call.noMedia':         'Telefonul nu mi-a dat voie la camera si microfon. Ii vezi si ii auzi, dar ei nu te aud.',
+      'call.weak':            'Semnal slab, incerc sa refac legatura...',
+      'call.lost':            'Legatura nu s-a putut reface.',
+      'call.notConnected':    'Nu sunt conectat la server. Astept internetul.',
+      'call.dialing':         'Sun...',
+      'call.ringing':         'Suna la rama...',
+      'call.ringingNow':      'Suna la rama... raspunde imediat',
+      'call.connecting':      'Va conectez...',
+      'call.startFailed':     'Nu am putut porni apelul.',
+      'call.incoming':        'Apel primit',
+      'call.callingYou':      'Te suna',
+      'call.answer':          'Raspunde',
+      'call.decline':         'Refuza',
+      'call.declined':        'Apel refuzat',
+      'call.answerFailed':    'Nu am putut raspunde la apel.',
+      'call.linkFailed':      'Nu am putut lega apelul.',
+      'call.flipFailed':      'Nu am gasit cealalta camera.',
+      'call.notAnswered':     '{name} nu a raspuns la apel.',
+      'call.cancelled':       'Apelul a fost anulat.',
+      'call.ended':           'Apelul s-a incheiat.',
+      'call.missed':          'Nu a raspuns nimeni.',
+      'call.failed':          'Apelul nu a putut porni.',
+      'call.interrupted':     'Apelul s-a intrerupt.',
+      'call.fail.calleeOffline': 'Rama nu e pornita acum.',
+      'call.fail.callerOffline': 'M-am deconectat. Incearca din nou.',
+      'call.fail.busy':       'Rama vorbeste deja cu cineva.',
+      'call.fail.notAllowed': 'Contul tau nu are voie sa sune la rama asta.',
+      'call.fail.serverBusy': 'Serverul e ocupat. Incearca peste un minut.',
+
+      'banner.offline':       'Nu ai internet. Astept sa revina.',
+      'banner.reconnecting':  'Ma reconectez la server...',
+      'banner.connecting':    'Ma conectez pentru apeluri...',
+
+      'account.connected':    'Esti conectat. Pozele si apelurile merg.',
+      'account.disconnected': 'Nu sunt conectat la server chiar acum.',
+      'account.logout':       'Iesi din cont',
+      'account.logoutAll':    'Iesi de pe toate telefoanele',
+      'account.logoutAllHint': 'Foloseste asta daca ai pierdut un telefon.',
+      'account.back':         'Inapoi'
+    }
+  };
+
+  /** Which plural form `n` takes in the current language. */
+  function pluralForm(n) {
     var abs = Math.abs(n);
-    if (abs === 1) return one;
-    if (abs === 0 || (abs % 100 >= 1 && abs % 100 <= 19)) return few;
-    return many;
+    if (LANG === 'ro') {
+      // Romanian: 1 poza / 0, 2..19 poze / 20+ de poze (and 101..119 again "poze")
+      if (abs === 1) return 'one';
+      if (abs === 0 || (abs % 100 >= 1 && abs % 100 <= 19)) return 'few';
+      return 'many';
+    }
+    return abs === 1 ? 'one' : 'other';
+  }
+
+  function lookup(key) {
+    var own = STRINGS[LANG] && STRINGS[LANG][key];
+    if (own !== undefined) return own;
+    var en = STRINGS.en[key];
+    return en !== undefined ? en : key;
+  }
+
+  function fill(str, vars) {
+    if (!vars) return str;
+    return String(str).replace(/\{(\w+)\}/g, function (all, name) {
+      return vars[name] !== undefined && vars[name] !== null ? String(vars[name]) : all;
+    });
+  }
+
+  /** t('login.submit') -> "Log in"; t('frame.call', {name: 'Frame A'}) -> "Call Frame A". */
+  function t(key, vars) {
+    var s = lookup(key);
+    if (s && typeof s === 'object') return tn(key, vars && typeof vars.n === 'number' ? vars.n : 0, vars);
+    return fill(s, vars);
+  }
+
+  /** Plural: tn('photos', 12) -> "12 photos" / "12 poze"; tn('photos', 20) -> "20 de poze". */
+  function tn(key, n, vars) {
+    var forms = lookup(key);
+    var s;
+    if (forms && typeof forms === 'object') {
+      s = forms[pluralForm(n)] || forms.other || forms.many || forms.one;
+    } else {
+      s = forms;
+    }
+    var all = { n: n };
+    if (vars) Object.keys(vars).forEach(function (k) { all[k] = vars[k]; });
+    return fill(s, all);
   }
 
   function photoCountLabel(n) {
-    return n + ' ' + plural(n, 'poza', 'poze', 'de poze');
+    return tn('photos', n);
+  }
+
+  /* Dictionary strings may carry <strong>...</strong> and nothing else. Built as
+   * DOM nodes rather than innerHTML, so no markup ever comes from a string. */
+  function setRich(node, str) {
+    if (!node) return;
+    node.textContent = '';
+    var parts = String(str).split(/<strong>([\s\S]*?)<\/strong>/);
+    for (var i = 0; i < parts.length; i++) {
+      if (!parts[i]) continue;
+      if (i % 2) {
+        var b = document.createElement('strong');
+        b.textContent = parts[i];
+        node.appendChild(b);
+      } else {
+        node.appendChild(document.createTextNode(parts[i]));
+      }
+    }
+  }
+
+  /** Apply data-i18n* attributes in index.html. The Romanian text in the HTML
+   *  stays as the no-JS fallback. */
+  function applyI18n(root) {
+    root = root || document;
+    var each = function (attr, fn) {
+      var nodes = root.querySelectorAll('[' + attr + ']');
+      for (var i = 0; i < nodes.length; i++) fn(nodes[i], nodes[i].getAttribute(attr));
+    };
+    each('data-i18n', function (el, key) { setRich(el, t(key)); });
+    each('data-i18n-aria', function (el, key) { el.setAttribute('aria-label', t(key)); });
+    each('data-i18n-placeholder', function (el, key) { el.setAttribute('placeholder', t(key)); });
+    each('data-i18n-title', function (el, key) { el.setAttribute('title', t(key)); });
+    each('data-i18n-content', function (el, key) { el.setAttribute('content', t(key)); });
+  }
+
+  /** Save a language and reload. A ?lang= in the URL would win over the saved
+   *  choice, so it is dropped from the address first. */
+  function switchLanguage(lang) {
+    attempt(function () { localStorage.setItem(LANG_KEY, lang); });
+    var href = String(location.href);
+    var clean = href
+      .replace(/([?&])lang=[^&#]*&?/, '$1')
+      .replace(/[?&](#|$)/, '$1');
+    if (clean !== href) location.replace(clean);
+    else location.reload();
   }
 
   function readCookie(name) {
@@ -89,9 +611,10 @@
     if (!iso) return '';
     var d = new Date(iso);
     if (isNaN(d.getTime())) return '';
-    var months = ['ian', 'feb', 'mar', 'apr', 'mai', 'iun',
-                  'iul', 'aug', 'sep', 'oct', 'noi', 'dec'];
-    return d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
+    // Short month names come from the dictionary (not Intl), so Romanian keeps
+    // its exact "3 noi 2026" form, without the "noi." that ro-RO Intl adds.
+    var months = String(t('date.months')).split(',');
+    return d.getDate() + ' ' + (months[d.getMonth()] || '') + ' ' + d.getFullYear();
   }
 
   function formatDuration(seconds) {
@@ -142,6 +665,21 @@
         actions.appendChild(b);
       });
 
+      // Optional small text link under the buttons (the language switch).
+      if (opts.footer) {
+        var f = document.createElement('button');
+        f.type = 'button';
+        f.className = 'sheet-link';
+        f.textContent = opts.footer.label;
+        if (opts.footer.lang) f.lang = opts.footer.lang;
+        if (opts.footer.aria) f.setAttribute('aria-label', opts.footer.aria);
+        on(f, 'click', function () {
+          Sheet.close();
+          if (opts.footer.onSelect) attempt(opts.footer.onSelect);
+        });
+        actions.appendChild(f);
+      }
+
       show($('sheet-backdrop'), true);
       show(sheet, true);
     },
@@ -163,31 +701,32 @@
   }
   ApiError.prototype = Object.create(Error.prototype);
 
+  /* Server error code -> dictionary key. */
   var NET_MSG = {
-    'invalid-credentials': 'Parola nu e buna. Mai incearca o data.',
-    'locked-out':          'Prea multe incercari gresite. Asteapta un sfert de ora.',
-    'rate-limited':        'Prea multe incercari. Asteapta un sfert de ora.',
-    'csrf':                'Sesiunea s-a incurcat. Reincarca pagina.',
-    'unauthenticated':     'Sesiunea a expirat. Intra din nou cu parola.',
-    'not-implemented':     'Serverul nu stie inca sa faca asta.',
-    'payload-too-large':   'Poza e prea mare pentru server.',
-    'unsupported-media':   'Formatul acestei poze nu e acceptat.'
+    'invalid-credentials': 'err.invalidCredentials',
+    'locked-out':          'err.lockedOut',
+    'rate-limited':        'err.rateLimited',
+    'csrf':                'err.csrf',
+    'unauthenticated':     'err.unauthenticated',
+    'not-implemented':     'err.notImplemented',
+    'payload-too-large':   'err.payloadTooLarge',
+    'unsupported-media':   'err.unsupportedMedia'
   };
 
-  /** One calm Romanian sentence for any failure. Never leaks a stack trace. */
+  /** One calm sentence for any failure. Never leaks a stack trace. */
   function humanError(err, fallback) {
-    if (!err) return fallback || 'Ceva nu a mers. Mai incearca.';
+    if (!err) return fallback || t('err.generic');
     if (err instanceof ApiError || err.name === 'ApiError') {
-      if (NET_MSG[err.code]) return NET_MSG[err.code];
-      if (err.status === 0) return 'Nu am putut ajunge la server. Verifica internetul.';
-      if (err.status === 401 || err.status === 403) return NET_MSG['unauthenticated'];
-      if (err.status === 404 || err.status === 501) return NET_MSG['not-implemented'];
-      if (err.status === 413) return NET_MSG['payload-too-large'];
-      if (err.status === 415) return NET_MSG['unsupported-media'];
-      if (err.status === 429) return NET_MSG['rate-limited'];
-      if (err.status >= 500) return 'Serverul are o problema. Incearca peste cateva minute.';
+      if (NET_MSG[err.code]) return t(NET_MSG[err.code]);
+      if (err.status === 0) return t('err.network');
+      if (err.status === 401 || err.status === 403) return t('err.unauthenticated');
+      if (err.status === 404 || err.status === 501) return t('err.notImplemented');
+      if (err.status === 413) return t('err.payloadTooLarge');
+      if (err.status === 415) return t('err.unsupportedMedia');
+      if (err.status === 429) return t('err.rateLimited');
+      if (err.status >= 500) return t('err.server');
     }
-    return fallback || 'Ceva nu a mers. Mai incearca.';
+    return fallback || t('err.generic');
   }
 
   var Net = {
@@ -279,11 +818,15 @@
     all: ['frame-a', 'frame-b']
   };
 
-  var DEFAULT_ALBUMS = [
-    { key: 'a',   name: 'Bunicii A',   tab: 'Bunicii A', frames: ALBUM_FRAMES.a },
-    { key: 'b',   name: 'Bunicii B',   tab: 'Bunicii B', frames: ALBUM_FRAMES.b },
-    { key: 'all', name: 'Ambele rame', tab: 'Ambele',    frames: ALBUM_FRAMES.all }
-  ];
+  /* Display names come from the dictionary by key (album.<key>.name / .tab). */
+  var DEFAULT_ALBUMS = ['a', 'b', 'all'].map(function (key) {
+    return {
+      key: key,
+      name: t('album.' + key + '.name'),
+      tab: t('album.' + key + '.tab'),
+      frames: ALBUM_FRAMES[key]
+    };
+  });
 
   /* The gallery's "everything" tab. It CANNOT be called 'all': that is the key
    * of the real "Toti" album, and the server would filter to just that one. The
@@ -319,13 +862,18 @@
         var mapped = raw.map(function (a, i) {
           var key = String(a.key || a.id || ('album-' + i));
           var known = DEFAULT_ALBUMS.filter(function (d) { return d.key === key; })[0];
-          // The server sends the LIVE Immich album name; prefer it over our label.
-          var name = String(a.name || a.displayName || (known && known.name) || key);
+          // The server's live album name is used only when someone gave the album a
+          // custom name (`customName === true`). Otherwise a known key takes its
+          // name from the dictionary, so it follows the app's language.
+          var custom = a.customName === true && !!(a.name || a.displayName);
+          var name = custom || !known
+            ? String(a.name || a.displayName || (known && known.name) || key)
+            : known.name;
           return {
             key: key,
             id: a.id || null,
             name: name,
-            tab: String(a.tab || (known && known.tab) || name),
+            tab: String(a.tab || (custom ? name : (known && known.tab)) || name),
             // /api/admin/albums has no `frames` field — it is a UI concept. Re-attach it by
             // key, or the A/B badge silently disappears from every tile.
             frames: Array.isArray(a.frames) ? a.frames
@@ -357,13 +905,13 @@
       return letters.sort().join('+');
     },
 
-    /** Long, human sentence: "Se vede pe: Bunicii A, Ambele rame". */
+    /** Long, human sentence: "Se vede pe: Bunicii A, Ambele rame" / "Shown on: Frame A". */
     describe: function (keys) {
-      if (!keys || !keys.length) return 'Nu stiu pe ce rama e';
+      if (!keys || !keys.length) return t('album.unknown');
       var names = keys.map(function (k) {
         return Albums.byKey[k] ? Albums.byKey[k].name : k;
       });
-      return 'Se vede pe: ' + names.join(', ');
+      return t('album.shownOn', { names: names.join(', ') });
     }
   };
   Albums.index();
@@ -570,7 +1118,7 @@
       other.setAttribute('role', 'radio');
       other.setAttribute('aria-checked', 'false');
       other.dataset.other = '1';
-      other.textContent = 'Altcineva';
+      other.textContent = t('login.someoneElse');
       on(other, 'click', function () { Login.chooseOther(); });
       box.appendChild(other);
 
@@ -601,7 +1149,7 @@
         input.id = 'who-other-input';
         input.className = 'who-other';
         input.type = 'text';
-        input.placeholder = 'Numele contului';
+        input.placeholder = t('login.accountName');
         input.autocapitalize = 'off';
         input.autocorrect = 'off';
         input.spellcheck = false;
@@ -629,7 +1177,7 @@
     busy: function (yes) {
       var btn = $('login-submit');
       btn.disabled = yes;
-      text(btn, yes ? 'Un moment...' : 'Intra');
+      text(btn, yes ? t('login.busy') : t('login.submit'));
     },
 
     submit: function (ev) {
@@ -637,8 +1185,8 @@
       var username = Login.username();
       var password = $('password').value || '';
 
-      if (!username) { Login.error('Spune-mi intai cine esti.'); return; }
-      if (!password) { Login.error('Scrie parola.'); return; }
+      if (!username) { Login.error(t('login.needWho')); return; }
+      if (!password) { Login.error(t('login.needPassword')); return; }
 
       Login.clearError();
       Login.busy(true);
@@ -653,13 +1201,13 @@
         $('password').value = '';
         if (err && err.status === 429) {
           var mins = err.retryAfter ? Math.ceil(err.retryAfter / 60) : 15;
-          Login.error('Prea multe incercari. Mai incearca peste ' + mins + ' minute.');
+          Login.error(tn('login.tooMany', mins));
         } else if (err && err.status === 0) {
-          Login.error('Nu am internet spre server. Verifica conexiunea telefonului.');
+          Login.error(t('login.noInternet'));
         } else if (err && (err.status === 401 || err.code === 'invalid-credentials')) {
-          Login.error('Parola nu e buna. Mai incearca o data.');
+          Login.error(t('err.invalidCredentials'));
         } else {
-          Login.error(humanError(err, 'Nu am putut intra. Mai incearca peste un minut.'));
+          Login.error(humanError(err, t('login.failed')));
         }
       });
     },
@@ -670,8 +1218,8 @@
         var input = $('password');
         var showing = input.type === 'text';
         input.type = showing ? 'password' : 'text';
-        text($('pass-toggle'), showing ? 'Arata' : 'Ascunde');
-        $('pass-toggle').setAttribute('aria-label', showing ? 'Arata parola' : 'Ascunde parola');
+        text($('pass-toggle'), showing ? t('login.show') : t('login.hide'));
+        $('pass-toggle').setAttribute('aria-label', showing ? t('login.showPassword') : t('login.hidePassword'));
         input.focus();
       });
       on($('password'), 'input', Login.clearError);
@@ -721,7 +1269,7 @@
     buildFilter: function () {
       var box = $('album-filter');
       box.textContent = '';
-      var segs = [{ key: ANY_ALBUM, tab: 'Toate' }].concat(Albums.list);
+      var segs = [{ key: ANY_ALBUM, tab: t('album.any.tab') }].concat(Albums.list);
       segs.forEach(function (a) {
         var b = document.createElement('button');
         b.type = 'button';
@@ -813,8 +1361,7 @@
         // Legacy mode cannot filter by album: say so once, plainly.
         if (res.legacy) {
           show($('album-filter'), false);
-          text($('gallery-note'),
-            'Serverul imi arata deocamdata toate pozele la un loc, fara impartirea pe rame.');
+          text($('gallery-note'), t('gallery.legacyNote'));
           show($('gallery-note'), true);
         }
 
@@ -825,11 +1372,11 @@
         show($('gallery-loading'), false);
         if (err && err.status === 401) return;            // App handles the logout
         if (Gallery.items.length) {
-          toast(humanError(err, 'Nu am mai putut aduce poze.'), 'bad');
+          toast(humanError(err, t('gallery.moreFailed')), 'bad');
           Gallery.hasMore = false;
           return;
         }
-        text($('gallery-error-text'), humanError(err, 'Nu am putut aduce pozele.'));
+        text($('gallery-error-text'), humanError(err, t('gallery.loadFailed')));
         show($('gallery-error'), true);
       });
     },
@@ -838,7 +1385,7 @@
       var n = Gallery.total != null ? Gallery.total : Gallery.items.length;
       var shown = Gallery.items.length;
       var label = Gallery.total != null && Gallery.total > shown
-        ? shown + ' din ' + photoCountLabel(n)
+        ? t('gallery.countOf', { shown: shown, total: photoCountLabel(n) })
         : photoCountLabel(shown);
       text($('gallery-count'), label);
     },
@@ -912,7 +1459,7 @@
       $('grid').classList.toggle('selecting', yes);
       var cells = $('grid').querySelectorAll('.cell');
       for (var i = 0; i < cells.length; i++) cells[i].setAttribute('aria-selected', 'false');
-      text($('btn-select'), yes ? 'Gata' : 'Selecteaza');
+      text($('btn-select'), yes ? t('gallery.done') : t('gallery.select'));
       show($('selbar'), yes);
       Gallery.updateSelCount();
     },
@@ -929,7 +1476,7 @@
 
     updateSelCount: function () {
       var n = Gallery.selectedIds().length;
-      text($('sel-count'), n === 0 ? 'Nimic selectat' : n + ' ' + plural(n, 'selectata', 'selectate', 'selectate'));
+      text($('sel-count'), n === 0 ? t('sel.none') : tn('sel.count', n));
       $('sel-delete').disabled = n === 0;
     },
 
@@ -1023,7 +1570,7 @@
       if (!item) { Viewer.close(); return; }
       var img = $('viewer-img');
       img.src = item.fullUrl || item.url;
-      img.alt = item.fileName || 'Poza';
+      img.alt = item.fileName || t('viewer.photo');
       var bits = [];
       if (item.createdAt) bits.push(formatDate(item.createdAt));
       if (item.albums) bits.push(Albums.describe(item.albums));
@@ -1075,42 +1622,42 @@
       var actions = [];
       if (album) {
         actions.push({
-          label: 'Scoate de pe "' + album.name + '"',
+          label: t('del.removeFrom', { album: album.name }),
           style: 'btn-primary',
-          hint: 'Poza ramane in arhiva, dar nu se mai vede pe rama.',
+          hint: t('del.removeHint'),
           onSelect: function () { Deleter.run(ids, 'album', albumKey); }
         });
       }
       actions.push({
-        label: 'Sterge definitiv',
+        label: t('del.permanent'),
         style: 'btn-danger',
         hint: album
-          ? 'Dispare de pe toate ramele si din arhiva.'
-          : 'Dispare de pe toate ramele si din arhiva. Nu se poate anula.',
+          ? t('del.permanentHint')
+          : t('del.permanentHintFinal'),
         onSelect: function () { Deleter.confirmPermanent(ids); }
       });
-      actions.push({ label: 'Renunta', style: 'btn-quiet' });
+      actions.push({ label: t('common.cancel'), style: 'btn-quiet' });
 
       Sheet.open({
-        title: 'Ce fac cu ' + what + '?',
+        title: t('del.askTitle', { what: what }),
         text: album
-          ? 'Poti doar sa le scoti de pe rama, sau sa le stergi cu totul.'
-          : 'Pozele selectate sunt de pe mai multe rame, asa ca le pot doar sterge definitiv.',
+          ? t('del.askAlbum')
+          : t('del.askMixed'),
         actions: actions
       });
     },
 
     confirmPermanent: function (ids) {
       Sheet.open({
-        title: 'Stergi definitiv ' + photoCountLabel(ids.length) + '?',
-        text: 'Nu se mai pot recupera din aplicatie.',
+        title: t('del.confirmTitle', { what: photoCountLabel(ids.length) }),
+        text: t('del.confirmText'),
         actions: [
           {
-            label: 'Da, sterge definitiv',
+            label: t('del.confirmYes'),
             style: 'btn-danger',
             onSelect: function () { Deleter.run(ids, 'permanent', null); }
           },
-          { label: 'Nu, renunta', style: 'btn-quiet' }
+          { label: t('del.confirmNo'), style: 'btn-quiet' }
         ]
       });
     },
@@ -1122,7 +1669,7 @@
         var node = Gallery.nodes[id];
         if (node) node.classList.add('dying');
       });
-      toast('Sterg ' + photoCountLabel(total) + '...', null, 60000);
+      toast(t('del.progress', { what: photoCountLabel(total) }), null, 60000);
 
       var undying = function () {
         ids.forEach(function (id) {
@@ -1135,23 +1682,23 @@
         Gallery.setSelecting(false);
         if (!res.ok.length) {
           undying();
-          toast('Nu am putut sterge nimic. Mai incearca.', 'bad', 5000);
+          toast(t('del.nothing'), 'bad', 5000);
           return;
         }
         if (mode === 'album') Gallery.dropAlbum(res.ok, albumKey);
         else Gallery.forget(res.ok);
         var n = res.ok.length;
         toast(mode === 'album'
-          ? photoCountLabel(n) + ' ' + plural(n, 'scoasa', 'scoase', 'scoase') + ' de pe rama.'
-          : photoCountLabel(n) + ' ' + plural(n, 'stearsa', 'sterse', 'sterse') + '.', 'good');
+          ? tn('del.removed', n, { what: photoCountLabel(n) })
+          : tn('del.deleted', n, { what: photoCountLabel(n) }), 'good');
       }).catch(function (err) {
         undying();
         Gallery.setSelecting(false);
         if (Photos.missing(err)) {
-          toast('Stergerea nu e inca disponibila pe server.', 'bad', 5000);
+          toast(t('del.unavailable'), 'bad', 5000);
           return;
         }
-        toast(humanError(err, 'Nu am putut sterge pozele. Mai incearca.'), 'bad', 5000);
+        toast(humanError(err, t('del.failed')), 'bad', 5000);
       });
     }
   };
@@ -1296,16 +1843,19 @@
           album: album,
           pct: 0,
           status: 'waiting',
-          message: 'In asteptare',
+          code: 'waiting',
+          message: t('up.st.waiting'),
           xhr: null
         };
         if (!looksImage) {
           task.status = 'error';
-          task.message = 'Nu e o poza';
+          task.code = 'notImage';
+          task.message = t('up.st.notImage');
           rejected++;
         } else if (file.size > MAX_FILE_BYTES) {
           task.status = 'error';
-          task.message = 'Prea mare';
+          task.code = 'tooBig';
+          task.message = t('up.st.tooBig');
           rejected++;
         } else {
           accepted++;
@@ -1316,7 +1866,7 @@
 
       show($('upload-summary'), false);
       if (rejected) {
-        toast(rejected + ' ' + plural(rejected, 'fisier a fost sarit', 'fisiere au fost sarite', 'de fisiere au fost sarite') + '.', 'bad');
+        toast(tn('up.skipped', rejected), 'bad');
       }
       if (accepted) Uploader.pump();
       else Uploader.finish();
@@ -1391,7 +1941,8 @@
       runPool(queue, UPLOAD_CONCURRENCY, function (task) {
         if (Uploader.cancelled) {
           task.status = 'error';
-          task.message = 'Oprita';
+          task.code = 'stopped';
+          task.message = t('up.st.stopped');
           Uploader.paint(task);
           return Promise.resolve();
         }
@@ -1411,6 +1962,7 @@
     send: function (task) {
       return new Promise(function (resolve) {
         task.status = 'up';
+        task.code = 'up';
         task.pct = 1;
         task.message = '1%';
         Uploader.paint(task);
@@ -1439,10 +1991,13 @@
           Uploader.renderStrip();
         };
 
-        var settle = function (status, message) {
+        /* `code` is the language-independent reason (see retryable()); the
+         * row shows its dictionary text, up.st.<code>. */
+        var settle = function (status, code) {
           task.xhr = null;
           task.status = status;
-          task.message = message;
+          task.code = code;
+          task.message = t('up.st.' + code);
           task.pct = status === 'ok' ? 100 : task.pct;
           Uploader.paint(task);
           Uploader.renderStrip();
@@ -1452,27 +2007,27 @@
         xhr.onload = function () {
           if (xhr.status >= 200 && xhr.status < 300) {
             var body = attempt(function () { return JSON.parse(xhr.responseText || '{}'); }) || {};
-            settle('ok', body.duplicate || body.status === 'duplicate' ? 'Deja acolo' : 'Gata');
+            settle('ok', body.duplicate || body.status === 'duplicate' ? 'duplicate' : 'done');
             return;
           }
           if (xhr.status === 401 || xhr.status === 403) {
             Net.fireUnauthenticated();
-            settle('error', 'Sesiune');
+            settle('error', 'session');
             return;
           }
-          if (xhr.status === 404 || xhr.status === 501) { settle('error', 'Indisponibil'); return; }
-          if (xhr.status === 413) { settle('error', 'Prea mare'); return; }
-          if (xhr.status === 415) { settle('error', 'Format'); return; }
-          if (xhr.status === 429) { settle('error', 'Prea repede'); return; }
-          settle('error', 'Esuat');
+          if (xhr.status === 404 || xhr.status === 501) { settle('error', 'unavailable'); return; }
+          if (xhr.status === 413) { settle('error', 'tooBig'); return; }
+          if (xhr.status === 415) { settle('error', 'format'); return; }
+          if (xhr.status === 429) { settle('error', 'tooFast'); return; }
+          settle('error', 'failed');
         };
-        xhr.onerror = function () { settle('error', 'Fara net'); };
-        xhr.ontimeout = function () { settle('error', 'Prea lent'); };
-        xhr.onabort = function () { settle('error', 'Oprita'); };
+        xhr.onerror = function () { settle('error', 'noNet'); };
+        xhr.ontimeout = function () { settle('error', 'tooSlow'); };
+        xhr.onabort = function () { settle('error', 'stopped'); };
         xhr.timeout = 10 * 60 * 1000;
 
         try { xhr.send(form); }
-        catch (e) { settle('error', 'Esuat'); }
+        catch (e) { settle('error', 'failed'); }
       });
     },
 
@@ -1508,14 +2063,14 @@
       Uploader.tasks.forEach(function (t) { if (t.status === 'up') partial += t.pct / 100; });
       var pct = c.total ? Math.round(((doneUnits + partial) / c.total) * 100) : 0;
       $('upload-strip-fill').style.width = clamp(pct, 0, 100) + '%';
-      text($('upload-strip-text'), 'Trimit pozele... ' + (doneUnits) + ' din ' + c.total);
+      text($('upload-strip-text'), t('up.strip', { done: doneUnits, total: c.total }));
     },
 
     /** Failures worth another try: a bad format or an oversized file is not one. */
     retryable: function () {
       return Uploader.tasks.filter(function (t) {
         return t.status === 'error' &&
-          t.message !== 'Prea mare' && t.message !== 'Nu e o poza' && t.message !== 'Format';
+          t.code !== 'tooBig' && t.code !== 'notImage' && t.code !== 'format';
       });
     },
 
@@ -1525,12 +2080,10 @@
       var c = Uploader.counts();
       if (!c.total) { show($('upload-summary'), false); return; }
 
-      var failedWord = plural(c.error, 'nu a mers', 'nu au mers', 'nu au mers');
-      var okWord = plural(c.ok, 'a ajuns', 'au ajuns', 'au ajuns');
       var line;
-      if (c.error === 0) line = 'Gata! ' + photoCountLabel(c.ok) + ' ' + okWord + ' pe rama.';
-      else if (c.ok === 0) line = 'Nicio poza nu a putut fi trimisa.';
-      else line = photoCountLabel(c.ok) + ' ' + okWord + '. ' + c.error + ' ' + failedWord + '.';
+      if (c.error === 0) line = tn('up.allDone', c.ok, { what: photoCountLabel(c.ok) });
+      else if (c.ok === 0) line = t('up.noneSent');
+      else line = tn('up.okPart', c.ok, { what: photoCountLabel(c.ok) }) + ' ' + tn('up.failPart', c.error);
 
       text($('summary-line'), line);
       show($('btn-retry-failed'), Uploader.retryable().length > 0);
@@ -1545,32 +2098,34 @@
 
     retryFailed: function () {
       var again = Uploader.retryable();
-      again.forEach(function (t) {
-        t.status = 'waiting';
-        t.pct = 0;
-        t.message = 'In asteptare';
-        Uploader.paint(t);
+      again.forEach(function (task) {
+        task.status = 'waiting';
+        task.code = 'waiting';
+        task.pct = 0;
+        task.message = t('up.st.waiting');
+        Uploader.paint(task);
       });
-      if (!again.length) { toast('Pozele astea nu pot fi trimise.', 'bad'); return; }
+      if (!again.length) { toast(t('up.cantRetry'), 'bad'); return; }
       show($('upload-summary'), false);
       Uploader.pump();
     },
 
     cancel: function () {
       Uploader.cancelled = true;
-      Uploader.tasks.forEach(function (t) {
-        if (t.xhr) attempt(function () { t.xhr.abort(); });
-        if (t.status === 'waiting') {
-          t.status = 'error';
-          t.message = 'Oprita';
-          Uploader.paint(t);
+      Uploader.tasks.forEach(function (task) {
+        if (task.xhr) attempt(function () { task.xhr.abort(); });
+        if (task.status === 'waiting') {
+          task.status = 'error';
+          task.code = 'stopped';
+          task.message = t('up.st.stopped');
+          Uploader.paint(task);
         }
       });
       show($('btn-cancel-uploads'), false);
     },
 
     clear: function () {
-      if (Uploader.running) { toast('Astept sa se termine ce e in lucru.', 'bad'); return; }
+      if (Uploader.running) { toast(t('up.waitRunning'), 'bad'); return; }
       Uploader.tasks = [];
       $('upload-list').textContent = '';
       show($('upload-summary'), false);
@@ -1712,15 +2267,15 @@
         dot.className = 'dot';
         status.appendChild(dot);
         var label = document.createElement('span');
-        label.textContent = c.busy ? 'Vorbeste acum'
-          : (c.online ? 'Pornita, gata de apel' : 'Nu e pornita');
+        label.textContent = c.busy ? t('frame.busy')
+          : (c.online ? t('frame.online') : t('frame.offline'));
         status.appendChild(label);
         card.appendChild(status);
 
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'btn btn-primary frame-call';
-        btn.textContent = 'Suna ' + (c.displayName || '');
+        btn.textContent = t('frame.call', { name: c.displayName || '' });
         btn.disabled = !c.online || !!c.busy || !Signal.connected;
         on(btn, 'click', function () { CallUI.start(c); });
         card.appendChild(btn);
@@ -1728,7 +2283,7 @@
         if (!c.online) {
           var hint = document.createElement('p');
           hint.className = 'micro';
-          hint.textContent = 'Rama nu raspunde. Poate e stinsa sau nu are internet.';
+          hint.textContent = t('frame.offlineHint');
           card.appendChild(hint);
         }
 
@@ -1880,8 +2435,7 @@
         CallUI.paintControls();
         if (!CallUI.warnedNoMedia) {
           CallUI.warnedNoMedia = true;
-          toast('Telefonul nu mi-a dat voie la camera si microfon. Ii vezi si ii auzi, dar ei nu te aud.',
-            'bad', 6000);
+          toast(t('call.noMedia'), 'bad', 6000);
         }
         return null;
       });
@@ -1924,9 +2478,9 @@
           CallUI.iceFailTimer = 0;
           CallUI.markActive();
         } else if (s === 'disconnected') {
-          CallUI.setStatus('Semnal slab, incerc sa refac legatura...');
+          CallUI.setStatus(t('call.weak'));
         } else if (s === 'failed') {
-          CallUI.setStatus('Semnal slab, incerc sa refac legatura...');
+          CallUI.setStatus(t('call.weak'));
           if (CallUI.role === 'caller') CallUI.restartIce();
           // Give the restart a real chance before giving up. Ending the call the
           // instant ICE reports `failed` is what made every call die at ~5 s.
@@ -1936,7 +2490,7 @@
               if (CallUI.state === 'idle' || !CallUI.pc) return;
               var st = CallUI.pc.iceConnectionState;
               if (st === 'connected' || st === 'completed') return;
-              CallUI.fail('Legatura nu s-a putut reface.');
+              CallUI.fail(t('call.lost'));
             }, ICE_FAIL_GRACE_MS);
           }
         }
@@ -2003,7 +2557,7 @@
     start: function (contact) {
       if (CallUI.state !== 'idle') return;
       if (!Signal.connected || !Signal.registered) {
-        toast('Nu sunt conectat la server. Astept internetul.', 'bad');
+        toast(t('call.notConnected'), 'bad');
         return;
       }
       CallUI.reset();
@@ -2012,13 +2566,13 @@
       CallUI.state = 'dialing';
 
       text($('call-peer'), contact.displayName || contact.id);
-      CallUI.setStatus('Sun...');
+      CallUI.setStatus(t('call.dialing'));
       CallUI.openUi();
       CallUI.ring({
         name: contact.displayName || contact.id,
-        sub: 'Suna la rama...',
+        sub: t('call.ringing'),
         actions: [{
-          label: 'Renunta',
+          label: t('common.cancel'),
           style: 'btn-danger',
           onSelect: function () { CallUI.hangup('user'); }
         }]
@@ -2032,14 +2586,14 @@
     onRinging: function (msg) {
       if (CallUI.role !== 'caller') return;
       CallUI.callId = msg.callId;
-      text($('ring-sub'), 'Suna la rama... raspunde imediat');
+      text($('ring-sub'), t('call.ringingNow'));
     },
 
     onAccepted: function (msg) {
       CallUI.callId = msg.callId || CallUI.callId;
       show($('ring'), false);
       CallUI.state = 'connecting';
-      CallUI.setStatus('Va conectez...');
+      CallUI.setStatus(t('call.connecting'));
       if (!msg.shouldCreateOffer) return;         // callee waits for the offer
 
       Promise.all([CallUI.getMedia(), Ice.get()]).then(function (out) {
@@ -2051,7 +2605,7 @@
           Signal.send({ type: 'offer', callId: CallUI.callId, sdp: pc.localDescription });
         });
       }).catch(function () {
-        CallUI.fail('Nu am putut porni apelul.');
+        CallUI.fail(t('call.startFailed'));
       });
     },
 
@@ -2069,18 +2623,18 @@
       CallUI.state = 'ringing-in';
 
       text($('call-peer'), CallUI.peer.displayName);
-      CallUI.setStatus('Apel primit');
+      CallUI.setStatus(t('call.incoming'));
       CallUI.openUi();
       CallUI.ring({
         name: CallUI.peer.displayName,
-        sub: 'Te suna',
+        sub: t('call.callingYou'),
         actions: [
-          { label: 'Raspunde', style: 'btn-primary', onSelect: CallUI.accept },
+          { label: t('call.answer'), style: 'btn-primary', onSelect: CallUI.accept },
           {
-            label: 'Refuza', style: 'btn-danger',
+            label: t('call.decline'), style: 'btn-danger',
             onSelect: function () {
               Signal.send({ type: 'call-decline', callId: CallUI.callId, reason: 'declined' });
-              CallUI.teardown('Apel refuzat');
+              CallUI.teardown(t('call.declined'));
             }
           }
         ]
@@ -2092,13 +2646,13 @@
       CallUI.acceptedLocally = true;
       show($('ring'), false);
       CallUI.state = 'connecting';
-      CallUI.setStatus('Va conectez...');
+      CallUI.setStatus(t('call.connecting'));
       Signal.send({ type: 'call-accept', callId: CallUI.callId });
       Promise.all([CallUI.getMedia(), Ice.get()]).then(function (out) {
         if (!CallUI.pc) CallUI.createPeer(out[1]);
         CallUI.drainOffer();
       }).catch(function () {
-        CallUI.fail('Nu am putut porni apelul.');
+        CallUI.fail(t('call.startFailed'));
       });
     },
 
@@ -2131,7 +2685,7 @@
           CallUI.capBitrate();
         });
       }).catch(function () {
-        CallUI.fail('Nu am putut raspunde la apel.');
+        CallUI.fail(t('call.answerFailed'));
       });
     },
 
@@ -2152,7 +2706,7 @@
         // Never tear down a call that is already carrying media. A rejected
         // answer mid-call means one renegotiation failed, not that the call is
         // over; the existing connection keeps running and ICE retries.
-        if (!CallUI.everConnected) CallUI.fail('Nu am putut lega apelul.');
+        if (!CallUI.everConnected) CallUI.fail(t('call.linkFailed'));
       });
     },
 
@@ -2225,11 +2779,11 @@
       var hasAudio = !!(CallUI.local && CallUI.local.getAudioTracks().length);
 
       $('btn-mic').setAttribute('aria-pressed', CallUI.micOn ? 'false' : 'true');
-      text($('btn-mic-text'), CallUI.micOn ? 'Microfon' : 'Fara sunet');
+      text($('btn-mic-text'), CallUI.micOn ? t('call.mic') : t('call.micOff'));
       $('btn-mic').disabled = !hasAudio;
 
       $('btn-cam').setAttribute('aria-pressed', CallUI.camOn ? 'false' : 'true');
-      text($('btn-cam-text'), CallUI.camOn ? 'Camera' : 'Fara video');
+      text($('btn-cam-text'), CallUI.camOn ? t('call.cam') : t('call.camOff'));
       $('btn-cam').disabled = !hasVideo;
       $('btn-flip').disabled = !hasVideo;
 
@@ -2277,7 +2831,7 @@
         CallUI.capBitrate();
         CallUI.paintControls();
       }).catch(function () {
-        toast('Nu am gasit cealalta camera.', 'bad');
+        toast(t('call.flipFailed'), 'bad');
       });
     },
 
@@ -2361,12 +2915,13 @@
     }
   };
 
+  /* Server call-failure code -> dictionary key. */
   var CALL_FAIL_MSG = {
-    'callee-offline': 'Rama nu e pornita acum.',
-    'caller-offline': 'M-am deconectat. Incearca din nou.',
-    'busy':           'Rama vorbeste deja cu cineva.',
-    'not-allowed':    'Contul tau nu are voie sa sune la rama asta.',
-    'server-busy':    'Serverul e ocupat. Incearca peste un minut.'
+    'callee-offline': 'call.fail.calleeOffline',
+    'caller-offline': 'call.fail.callerOffline',
+    'busy':           'call.fail.busy',
+    'not-allowed':    'call.fail.notAllowed',
+    'server-busy':    'call.fail.serverBusy'
   };
 
   function wireSignalHandlers() {
@@ -2388,21 +2943,21 @@
     Signal.on('ice-candidate', function (msg) { CallUI.onCandidate(msg); });
 
     Signal.on('call-declined', function (msg) {
-      CallUI.teardown((msg.byName || 'Rama') + ' nu a raspuns la apel.');
+      CallUI.teardown(t('call.notAnswered', { name: msg.byName || t('frame.default') }));
     });
     Signal.on('call-cancelled', function () {
-      CallUI.teardown('Apelul a fost anulat.');
+      CallUI.teardown(t('call.cancelled'));
     });
     Signal.on('hangup', function () {
-      CallUI.teardown('Apelul s-a incheiat.');
+      CallUI.teardown(t('call.ended'));
     });
     Signal.on('call-ended', function (msg) {
       if (CallUI.state === 'idle') return;
-      var why = msg.outcome === 'missed' ? 'Nu a raspuns nimeni.' : 'Apelul s-a incheiat.';
+      var why = msg.outcome === 'missed' ? t('call.missed') : t('call.ended');
       CallUI.teardown(why);
     });
     Signal.on('call-failed', function (msg) {
-      CallUI.teardown(CALL_FAIL_MSG[msg.code] || 'Apelul nu a putut porni.');
+      CallUI.teardown(CALL_FAIL_MSG[msg.code] ? t(CALL_FAIL_MSG[msg.code]) : t('call.failed'));
       Frames.render();
     });
 
@@ -2413,7 +2968,7 @@
         return;
       }
       if (msg.code === 'not-allowed' || msg.code === 'peer-offline') {
-        CallUI.teardown(CALL_FAIL_MSG[msg.code] || 'Apelul s-a intrerupt.');
+        CallUI.teardown(CALL_FAIL_MSG[msg.code] ? t(CALL_FAIL_MSG[msg.code]) : t('call.interrupted'));
       }
     });
 
@@ -2424,7 +2979,7 @@
    * 13. App shell / navigation / boot
    * ====================================================================== */
 
-  var TAB_TITLES = { gallery: 'Poze', upload: 'Incarca poze', call: 'Apel video' };
+  var TAB_TITLES = { gallery: t('title.gallery'), upload: t('title.upload'), call: t('title.call') };
 
   var App = {
     tab: 'gallery',
@@ -2469,7 +3024,7 @@
         Session.account = null;
         Signal.disconnect();
         CallUI.teardown(null);
-        App.showLogin('Sesiunea a expirat. Intra din nou cu parola.');
+        App.showLogin(t('err.unauthenticated'));
       };
     },
 
@@ -2495,9 +3050,9 @@
       var banner = $('banner');
       var message = '';
 
-      if (!App.online) message = 'Nu ai internet. Astept sa revina.';
-      else if (Session.account && !Signal.connected) message = 'Ma reconectez la server...';
-      else if (Session.account && !Signal.registered) message = 'Ma conectez pentru apeluri...';
+      if (!App.online) message = t('banner.offline');
+      else if (Session.account && !Signal.connected) message = t('banner.reconnecting');
+      else if (Session.account && !Signal.registered) message = t('banner.connecting');
 
       text(banner, message);
       show(banner, !!message);
@@ -2512,22 +3067,30 @@
       Sheet.open({
         title: name,
         text: Signal.connected
-          ? 'Esti conectat. Pozele si apelurile merg.'
-          : 'Nu sunt conectat la server chiar acum.',
+          ? t('account.connected')
+          : t('account.disconnected'),
         actions: [
           {
-            label: 'Iesi din cont',
+            label: t('account.logout'),
             style: 'btn-quiet',
             onSelect: function () { App.doLogout(false); }
           },
           {
-            label: 'Iesi de pe toate telefoanele',
+            label: t('account.logoutAll'),
             style: 'btn-danger-quiet',
-            hint: 'Foloseste asta daca ai pierdut un telefon.',
+            hint: t('account.logoutAllHint'),
             onSelect: function () { App.doLogout(true); }
           },
-          { label: 'Inapoi', style: 'btn-quiet' }
-        ]
+          { label: t('account.back'), style: 'btn-quiet' }
+        ],
+        // Language switch: names the OTHER language, in that language, so it
+        // is recognisable to someone who cannot read the current one.
+        footer: {
+          label: t('lang.switchLabel'),
+          aria: t('lang.switchAria'),
+          lang: LANG === 'ro' ? 'en' : 'ro',
+          onSelect: function () { switchLanguage(LANG === 'ro' ? 'en' : 'ro'); }
+        }
       });
     },
 
@@ -2576,6 +3139,7 @@
     },
 
     boot: function () {
+      applyI18n(document);
       App.mount();
       Session.fetch().then(function (account) {
         if (account && account.peerId) App.enterShell();
@@ -2583,13 +3147,13 @@
           // Authenticated but the server did not bind us to a roster peer:
           // photos work, calls do not. Say so once, in the call tab.
           App.enterShell();
-          toast('Contul tau nu are inca acces la apeluri video.', 'bad', 5000);
+          toast(t('boot.noCalls'), 'bad', 5000);
         } else {
           App.showLogin('');
         }
       }).catch(function (err) {
         App.showLogin(err && err.status === 0
-          ? 'Nu am putut ajunge la server. Verifica internetul si reincarca.'
+          ? t('boot.noServer')
           : '');
       });
     }

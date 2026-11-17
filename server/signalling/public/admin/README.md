@@ -18,9 +18,41 @@ no dependency and no CDN: four files plus icons, served as-is.
 | `manifest.webmanifest` | PWA manifest. `display: standalone`, `scope: /admin/`. |
 | `icon.svg`, `icon-180.png`, `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | App icons. `icon-180.png` is the iOS `apple-touch-icon`. |
 
-Everything the user reads is in Romanian, without diacritics — the frames' font stack and the
-parents' keyboards both handle plain ASCII more predictably, and "Sterge" is not less clear than
-"Șterge".
+### Languages: English and Romanian
+
+The app speaks **English** or **Romanian**. The language is decided once, at startup:
+
+1. `?lang=en` or `?lang=ro` in the URL wins, and is saved to `localStorage` (`admin.lang`);
+2. otherwise the saved `admin.lang`;
+3. otherwise `navigator.language` — anything starting with `ro` gets Romanian, everything else
+   English.
+
+`<html lang>` is set to match. The account sheet (avatar, top right) has a small link naming the
+other language (`English` / `Romana`); it saves the choice, drops any `?lang=` from the address and
+reloads. The login screen has no language control on purpose.
+
+* **One dictionary**, `STRINGS = { en: {...}, ro: {...} }` near the top of `app.js`, with the same
+  keys in both. `t(key, vars)` fills `{name}` placeholders; `tn(key, n, vars)` picks a plural form
+  (English `one`/`other`; Romanian `one`/`few`/`many` — *1 poza / 12 poze / 20 de poze*). A
+  missing key falls back to English, then to the key itself. Every visible string, aria-label,
+  placeholder, toast, banner and error goes through it.
+* **`index.html`** keeps its Romanian text as the no-JS fallback and marks each string with
+  `data-i18n` (text), `data-i18n-aria`, `data-i18n-placeholder`, `data-i18n-title` or
+  `data-i18n-content` (meta tags). `applyI18n()` runs first thing in `App.boot()`, while the boot
+  splash still covers the page. Dictionary strings may contain `<strong>…</strong>` and nothing
+  else; they are built as DOM nodes, never through `innerHTML`.
+* **Album names** come from the dictionary by key (`album.a.name`, `album.a.tab`, …): English
+  *Frame A / Frame B / Both frames* (tabs *All · Frame A · Frame B · Both*), Romanian
+  *Bunicii A / Bunicii B / Ambele rame* (tabs *Toate · Bunicii A · Bunicii B · Ambele*). The
+  server's album `name` is used only when it sends `customName: true` for that album.
+* **Frame names on the call screen** (`Bunicii A`, …) come from the server roster as they are; the
+  app does not translate them.
+* Dates use the dictionary's short month names (`3 Nov 2026` / `3 noi 2026`), not `Intl`, so the
+  Romanian form stays exactly what it was.
+
+The Romanian copy is written without diacritics — the frames' font stack and the parents'
+keyboards both handle plain ASCII more predictably, and "Sterge" is not less clear than "Șterge".
+Keep new Romanian strings in that style.
 
 ---
 
@@ -148,7 +180,7 @@ honest: *"12 poze sterse."*, *"9 sterse, 3 nu au mers."*, or *"Nu am putut sterg
 * **The account sheet** (avatar, top right): `Iesi din cont`, `Iesi de pe toate telefoanele`
   (the lost-phone button, `POST /api/auth/logout-all`), `Inapoi`.
 * **Toasts** for anything transient. No `alert()`, no `confirm()`, no stack trace, ever. Every
-  failure goes through `humanError()`, which turns a status code into one Romanian sentence.
+  failure goes through `humanError()`, which turns a status code into one plain sentence in the app's language.
 
 ---
 
@@ -164,7 +196,7 @@ instead of an error screen.
 | `POST /api/auth/login` | `{username, password}` | Same shape as `session` on success. `401 {"error":"invalid-credentials"}`. `429` + `Retry-After` when locked out. |
 | `POST /api/auth/logout` | — | anything 2xx |
 | `POST /api/auth/logout-all` | — | anything 2xx |
-| `GET /api/admin/albums` | — | `{albums:[{key,id,name,count}]}`. Keys are **`a`, `b`, `all`** — the server's own vocabulary. `frames` is not sent; the client re-attaches it by key for the A/B tile badge. |
+| `GET /api/admin/albums` | — | `{albums:[{key,id,name,customName,count}]}`. `name` is shown only when `customName === true`; otherwise the label comes from the app's dictionary. Keys are **`a`, `b`, `all`** — the server's own vocabulary. `frames` is not sent; the client re-attaches it by key for the A/B tile badge. |
 | `GET /api/admin/photos?album=&page=&pageSize=` | `album` is `a`\|`b`\|`all`\|`both`\|`any`\|`""`; `page` is 1-based. **`any` means "every album"** — `all` is the key of the *Toti* album and filters to just that one. | `{photos:[{id,filename,date,favorite,albums:[key],thumbnailUrl,previewUrl}], page, pageCount, total, albums}` |
 | `POST /api/admin/photos` | `multipart/form-data`: `album=<key>`, `fileCreatedAt`, then one or more file parts (any field name) | `{ok, uploaded, failed, results:[{filename, ok, assetId, duplicate}]}`. `duplicate:true` shows as "Deja acolo". |
 | `POST /api/admin/photos/delete` | `{ids:[…], mode:"album"\|"library", album?}` — the bulk form the client uses | `{ok, mode, removed\|deleted}` |
@@ -213,6 +245,13 @@ Rules the client follows, from ARCHITECTURE-PUBLIC.md:
 * `manifest.webmanifest` + `sw.js` make the app installable. On iOS, Share → "Adauga pe ecranul
   principal" gives a standalone app with the amber icon; on Android, Chrome offers the install
   prompt.
+* **The manifest is in English only** (`name` and `short_name` "Family frame"). A static manifest
+  cannot follow each phone's language without the server generating it per user, so Android shows
+  "Family frame" under the icon whatever the app's language. On iOS the home-screen name comes from
+  the `apple-mobile-web-app-title` meta tag, which `applyI18n()` sets at runtime (`Family frame` /
+  `Rama`), so it follows the app's language at the moment the icon is added.
+* After changing any shell file, bump `VERSION` in `sw.js` (now `admin-v3`) so installed phones
+  replace their cached copy.
 * The service worker scope is `/admin/`, which is narrower than the tablet's root-scoped
   `sw.js`, so it wins for these pages and the tablet's cache is left alone.
 * **Static assets are network-first, cache-fallback.** Cache-first would be a few milliseconds
