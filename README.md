@@ -13,6 +13,12 @@ anything.
 > 2026 on one server and one Samsung Galaxy Tab A9+. The interface is in English and Romanian
 > (see [Languages](#languages)).
 
+![One-minute demo: Ana adds a photo from her phone and it appears on the frame, then she calls the frame, it rings, one tap answers, and the call ends back on the photos](docs/images/demo.gif)
+
+<sub>A real call from the phone app to the frame through the real signalling server, recorded
+locally. The cameras are simulated, the photos are generated samples, and the photo refresh is
+sped up. Also available as an [MP4](docs/demo.mp4).</sub>
+
 | The frame, showing photos | Someone is calling |
 |---|---|
 | ![The frame showing a photo with the clock and weather](docs/images/frame-idle.jpg) | ![Incoming call: "Ana is calling" with a large green ANSWER button and a smaller red NOT NOW button](docs/images/frame-ringing.png) |
