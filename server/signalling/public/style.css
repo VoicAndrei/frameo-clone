@@ -1,0 +1,656 @@
+/* =============================================================================
+   Rama — tablet UI stylesheet
+   -----------------------------------------------------------------------------
+   EVERY dimension that a finger or an eye interacts with is expressed in real
+   millimetres through the --mm custom property.
+
+   Why not the CSS `mm` unit? Because CSS pins 1mm to exactly 96/25.4 = 3.7795
+   px regardless of the real panel, so it is *not* a physical millimetre on a
+   tablet. app.js measures the panel and sets --mm to the true CSS-pixels-per-
+   millimetre value:
+
+       cssPxPerMm = hypot(screen.width, screen.height) / (diagonalInches * 25.4)
+
+   (devicePixelRatio cancels out of that ratio, so it works on any density.)
+
+   Reference device — 11", 1920x1200:
+       diagonal        = hypot(1920,1200) = 2264.2 px over 279.4 mm
+       --mm            = 8.104 px
+       10 mm edge      =  81 px
+       20 mm target    = 162 px
+       27 mm dead zone = 219 px
+       1.5 mm border   =  12 px
+   The fallback value below equals that reference so the layout is already
+   correct on the very first paint, before JS runs.
+   ============================================================================= */
+
+:root {
+  /* physical scale ------------------------------------------------------- */
+  --mm: 8.104px;                       /* overwritten by app.js at boot */
+  --edge:     calc(var(--mm) * 10);    /* nothing may sit inside this margin */
+  --touch:    calc(var(--mm) * 20);    /* minimum touch target, any axis */
+  --deadzone: calc(var(--mm) * 27);    /* Answer <-> Decline separation */
+  --bord:     calc(var(--mm) * 1.5);   /* every button border */
+  --radius:   calc(var(--mm) * 3);
+
+  /* Uniform scale applied to the Answer/Decline pair by Metrics.fitControls().
+     It is 1 on the 11" reference panel. Scaling BOTH dimensions of BOTH
+     buttons by the same factor leaves the 2.40 area ratio exactly intact, and
+     it is clamped so the smaller button never drops below the 20 mm minimum. */
+  --btn-scale: 1;
+
+  /* palette — dark surfaces, never white. All text >= 7:1 on its own bg.
+     #FFF on #111111 = 18.9:1
+     #FFF on #1B5E20 =  7.9:1
+     #FFF on #8C1D18 =  9.1:1
+     #FFF on #2A2A2E = 14.2:1                                              */
+  --bg:      #111111;
+  --band:    #111111;
+  --surface: #1A1A1D;
+  --grey:    #2A2A2E;
+  --green:   #1B5E20;
+  --red:     #8C1D18;
+  --text:    #FFFFFF;
+  --edging:  #F2F2F2;                  /* button border: max contrast */
+
+  /* type ----------------------------------------------------------------- */
+  --fs-band:  calc(var(--mm) * 12);
+  --fs-btn:   calc(var(--mm) * 9);
+  --fs-hint:  calc(var(--mm) * 8);
+  --fs-msg:   calc(var(--mm) * 13);
+  --fs-tile:  calc(var(--mm) * 8);
+}
+
+/* ---------------------------------------------------------------------------
+   Global lockdown: no scrolling, no selection, no gestures, no callouts.
+   touch-action:none kills pan/zoom/double-tap-zoom at the browser level.
+   --------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Roboto", "Noto Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-weight: 700;
+  line-height: 1.18;
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: none;                 /* kiosk: no mouse pointer artefacts */
+}
+
+body.debug-mode { cursor: auto; }
+
+img, video { display: block; -webkit-user-drag: none; user-select: none; }
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sprite symbol path { fill: currentColor; }
+
+/* ---------------------------------------------------------------------------
+   Screens. Exactly one is active at a time.
+   --------------------------------------------------------------------------- */
+.screen {
+  position: fixed;
+  inset: 0;
+  display: none;
+  background: var(--bg);
+  z-index: 1;
+}
+.screen.is-active { display: flex; }
+
+/* =============================================================================
+   1. IDLE — slideshow
+   ============================================================================= */
+.screen-idle { flex-direction: column; }
+
+.slides { position: absolute; inset: 0; }
+
+.slide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--fade, 1500ms) ease-in-out;
+  will-change: opacity;
+  background: var(--bg);
+}
+.slide.is-front { opacity: 1; }
+
+/* Blurred, dimmed copy of the same photo fills the frame ... */
+.slide-bg {
+  position: absolute;
+  inset: calc(var(--mm) * -12);          /* overscan so the blur has no edge */
+  width: calc(100% + var(--mm) * 24);
+  height: calc(100% + var(--mm) * 24);
+  object-fit: cover;
+  filter: blur(calc(var(--mm) * 5)) brightness(0.38) saturate(0.75);
+  transform: translateZ(0);
+}
+/* ... and the real photo sits on top, CONTAIN, so faces are never cropped. */
+.slide-fg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* The only chrome in idle. Opaque so contrast never depends on the photo.
+   Text baseline stays >= 10 mm clear of the physical bottom edge. */
+/* --- clock stamp (idle screen only) --------------------------------------
+   Replaces the old bottom hint bar. Top-right, over the photo, never a tap
+   target. Legibility over an unknown photo is carried ENTIRELY by the text
+   shadow: glyphs only, no background of any kind.
+
+   There used to be a `linear-gradient(to bottom left, ...)` corner scrim here.
+   It was visible as a grey rectangle sitting on the photo, because a linear
+   gradient only fades along its own axis — perpendicular to that axis the alpha
+   is constant, so the box's left and bottom edges ended abruptly at ~0.2 alpha
+   instead of fading out. Any element-sized background has that problem, so the
+   scrim is gone rather than re-tuned; the layered shadow below replaces it. */
+.stamp {
+  position: absolute;
+  top: 0; right: 0;
+  z-index: 2;
+  padding: calc(var(--mm) * 6) calc(var(--mm) * 8) 0 0;
+  text-align: right;
+  color: #FFFFFF;
+  pointer-events: none;              /* the whole screen must stay one tap target */
+  -webkit-user-select: none; user-select: none;
+  background: none;
+  /* Three layers, cheap because the stamp repaints once a minute: a tight
+     near-opaque outline hugging each glyph so white-on-white still separates,
+     the original offset shadow for lift, then a soft wide halo that darkens a
+     pale photo just enough without drawing an edge anywhere. */
+  text-shadow:
+    0 0 calc(var(--mm) * 0.6) rgba(0, 0, 0, 0.95),
+    0 calc(var(--mm) * 0.25) calc(var(--mm) * 1.2) rgba(0, 0, 0, 0.9),
+    0 0 calc(var(--mm) * 3.2) rgba(0, 0, 0, 0.6);
+}
+.stamp-time {
+  font-size: calc(var(--mm) * 10);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;  /* the colon must not jitter every minute */
+}
+.stamp-sub {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: calc(var(--mm) * 2);
+  margin-top: calc(var(--mm) * 1.5);
+  font-size: calc(var(--mm) * 4.6);
+  font-weight: 600;
+  line-height: 1;
+}
+.stamp-icon {
+  width: calc(var(--mm) * 6);
+  height: calc(var(--mm) * 6);
+  fill: currentColor;
+  flex: none;
+  /* Matches the text shadow now that no scrim backs the glyph. */
+  filter: drop-shadow(0 0 calc(var(--mm) * 0.5) rgba(0, 0, 0, 0.95))
+          drop-shadow(0 calc(var(--mm) * 0.25) calc(var(--mm) * 1.2) rgba(0, 0, 0, 0.8));
+}
+.stamp-icon[hidden] { display: none; }
+/* Weather is optional: when it is missing the date must not be left hanging
+   next to an empty gap. */
+.stamp-temp:empty { display: none; }
+
+/* The stamp belongs to the slideshow only. Ring / call / message screens own
+   the whole panel and must not have a clock floating over a face. */
+.screen:not(.screen-idle) .stamp { display: none; }
+
+/* =============================================================================
+   2. PERSON SCREENS — ring / undo / dialing / missed / unavailable
+   Photo on top, text ALWAYS on a solid band, controls at the bottom.
+   ============================================================================= */
+.screen-person {
+  flex-direction: column;
+  padding: var(--edge);
+  gap: calc(var(--mm) * 6);
+}
+
+.person-photo {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;              /* the photo absorbs any squeeze, never the
+                                 controls — they must stay on screen */
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: #000;
+}
+.person-bg {
+  position: absolute;
+  inset: calc(var(--mm) * -10);
+  width: calc(100% + var(--mm) * 20);
+  height: calc(100% + var(--mm) * 20);
+  object-fit: cover;
+  filter: blur(calc(var(--mm) * 4)) brightness(0.34);
+}
+.person-fg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Solid text band — never text over a photo. */
+.band {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--mm) * 24);
+  padding: calc(var(--mm) * 4) calc(var(--mm) * 8);
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+.band-call { background: #1E2A1E; }     /* still 15:1+ with white text */
+.band-text {
+  font-size: var(--fs-band);
+  text-align: center;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* --- button row ------------------------------------------------------------
+   The 27 mm dead zone is the flex gap, so it is preserved even if the row
+   wraps to a column on a portrait panel.                                     */
+.actions {
+  flex: none;
+  display: flex;
+  flex-wrap: nowrap;          /* wrapping would push a control off-screen; the
+                                 fit pass guarantees the row fits instead */
+  align-items: center;
+  justify-content: center;
+  gap: var(--deadzone);
+  padding-top: calc(var(--mm) * 2);
+}
+.actions-single { gap: 0; }
+
+/* Arming: the row fades in over the inert period so a too-early tap has an
+   obvious visual reason for doing nothing. Never a text message. */
+.actions.is-arming { opacity: 0.34; }
+.actions { transition: opacity 320ms linear; }
+
+/* --- buttons ---------------------------------------------------------------
+   Every button = icon + text + 1.5 mm border. Colour is never the only cue.  */
+.btn {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--mm) * 4);
+  min-width: var(--touch);
+  min-height: var(--touch);
+  padding: 0 calc(var(--mm) * 5);
+  border: var(--bord) solid var(--edging);
+  border-radius: var(--radius);
+  background: var(--grey);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-btn);
+  letter-spacing: 0.02em;
+  touch-action: none;
+  transition: transform 90ms ease-out, filter 90ms ease-out;
+}
+.btn:focus { outline: none; }
+.btn.is-pressed { transform: scale(0.98); filter: brightness(1.35); }
+
+.btn-icon {
+  width: calc(var(--mm) * 13);
+  height: calc(var(--mm) * 13);
+  flex: none;
+  color: currentColor;
+}
+.btn-label { white-space: nowrap; }
+
+/* ANSWER : DECLINE area ratio
+   answer  = 120 x 44 mm = 5280 mm^2
+   decline =  55 x 40 mm = 2200 mm^2
+   5280 / 2200 = 2.40 exactly.                                               */
+.btn-answer {
+  width:  calc(var(--mm) * 120 * var(--btn-scale));
+  height: calc(var(--mm) * 44  * var(--btn-scale));
+  background: var(--green);
+}
+/* "NU ACUM" measures 42.7 mm at --fs-btn, but a 55 mm-wide button offers only
+   ~28 mm beside the 13 mm icon and the 5 mm side padding, so the label used to
+   hang 2.4 mm past the red edge. Stacking the icon ABOVE the label hands it the
+   full width instead (it now clears both edges by 6.1 mm). That keeps the 9 mm
+   type and the 13 mm icon at their designed sizes, and leaves the 55 x 40 mm
+   box — and therefore the exact 2.40 area ratio and the row width — untouched.
+   Stacked height: 13 + 1.5 + 10.6 = 25.1 mm inside 37 mm.
+   Measured at the tablet's real scale: 1280x800 CSS px, --mm = 5.4024. */
+.btn-decline {
+  width:  calc(var(--mm) * 55 * var(--btn-scale));
+  height: calc(var(--mm) * 40 * var(--btn-scale));
+  background: var(--red);
+  flex-direction: column;
+  gap: calc(var(--mm) * 1.5 * var(--btn-scale));
+  padding: 0 calc(var(--mm) * 2 * var(--btn-scale));
+}
+/* fitControls() scales the button boxes but never --fs-btn, so on a narrower
+   panel a fixed-size label would overflow again. Tie the two scaled buttons'
+   labels to the same factor. On this tablet the row needs 216.9 mm of the
+   216.9 mm available, so --btn-scale is exactly 1 and this is a no-op. */
+.btn-answer .btn-label,
+.btn-decline .btn-label { font-size: calc(var(--fs-btn) * var(--btn-scale)); }
+.btn-stop {
+  width:  calc(var(--mm) * 78);
+  height: calc(var(--mm) * 34);
+  background: var(--grey);
+}
+.btn-stop.is-hangup { background: var(--red); }
+
+/* Thin non-textual progress line for the 5 s / 3 s undo windows. */
+.countdown {
+  position: absolute;
+  left: var(--edge);
+  right: var(--edge);
+  top: calc(var(--edge) * 0.35);
+  height: calc(var(--mm) * 1.6);
+  border-radius: 999px;
+  background: #2A2A2E;
+  overflow: hidden;
+}
+.countdown i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: var(--edging);
+  transform-origin: left center;
+}
+.countdown.is-running i {
+  animation: countdown-shrink var(--countdown, 5000ms) linear forwards;
+}
+@keyframes countdown-shrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* =============================================================================
+   3. CALL GRID (outgoing)
+   ============================================================================= */
+.screen-grid {
+  flex-direction: column;
+  padding: var(--edge);
+  gap: calc(var(--mm) * 8);
+}
+
+.tiles {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-auto-rows: 1fr;
+  gap: calc(var(--mm) * 10);
+  min-height: 0;
+}
+.tiles[data-count="1"] { grid-template-columns: 1fr; }
+.tiles[data-count="2"] { grid-auto-rows: 1fr; }
+.tiles[data-count="3"] .tile:first-child { grid-column: span 2; }
+
+.tile {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: var(--touch);
+  min-height: var(--touch);
+  padding: 0;
+  overflow: hidden;
+  border: var(--bord) solid var(--edging);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  touch-action: none;
+  transition: transform 90ms ease-out, filter 90ms ease-out;
+}
+.tile.is-pressed { transform: scale(0.985); filter: brightness(1.3); }
+
+.tile-photo {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #000;
+}
+.tile-photo .person-bg,
+.tile-photo .person-fg { border-radius: 0; }
+
+/* Name sits on its own solid band inside the tile, never over the face. */
+.tile-name {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--mm) * 16);
+  padding: calc(var(--mm) * 2) calc(var(--mm) * 4);
+  background: var(--surface);
+  font-size: var(--fs-tile);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-back {
+  flex: none;
+  width: 100%;
+  height: calc(var(--mm) * 26);
+  background: var(--grey);
+}
+
+/* =============================================================================
+   4. IN CALL
+   ============================================================================= */
+.screen-call { background: #000; }
+
+.remote-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+/* Audio-only fallback layer: stored photo + gentle level ring. Never announced,
+   never a black screen. */
+.audio-only {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  z-index: 2;
+}
+.screen-call.is-audio-only .audio-only { display: flex; }
+.screen-call.is-audio-only .remote-video { visibility: hidden; }
+
+.audio-only .person-bg {
+  position: absolute;
+  inset: calc(var(--mm) * -10);
+  width: calc(100% + var(--mm) * 20);
+  height: calc(100% + var(--mm) * 20);
+  object-fit: cover;
+  filter: blur(calc(var(--mm) * 5)) brightness(0.3);
+}
+.audio-ring-wrap {
+  position: relative;
+  width: calc(var(--mm) * 92);
+  height: calc(var(--mm) * 92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.audio-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: calc(var(--mm) * 2) solid rgba(255, 255, 255, 0.55);
+  transform: scale(calc(1 + var(--level, 0) * 0.16));
+  box-shadow: 0 0 calc(var(--mm) * 10) rgba(255, 255, 255, calc(0.10 + var(--level, 0) * 0.35));
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+}
+.audio-face {
+  width: calc(var(--mm) * 78);
+  height: calc(var(--mm) * 78);
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--surface);
+}
+
+/* Self-view PiP — bottom-left, deliberately NOT tappable. */
+.self-video {
+  position: absolute;
+  left: var(--edge);
+  bottom: var(--edge);
+  width: calc(var(--mm) * 46);
+  height: calc(var(--mm) * 34);
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: calc(var(--mm) * 0.8) solid rgba(255, 255, 255, 0.5);
+  background: #000;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.reconnect-band {
+  position: absolute;
+  left: var(--edge);
+  right: var(--edge);
+  top: var(--edge);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--mm) * 22);
+  padding: calc(var(--mm) * 3) calc(var(--mm) * 6);
+  background: var(--surface);
+  border-radius: var(--radius);
+  z-index: 4;
+}
+.screen-call.is-reconnecting .reconnect-band { display: flex; }
+
+/* The one and only in-call control. */
+.btn-hangup {
+  position: absolute;
+  right: var(--edge);
+  bottom: var(--edge);
+  width:  calc(var(--mm) * 62);
+  height: calc(var(--mm) * 30);
+  background: var(--red);
+  z-index: 5;
+}
+
+/* =============================================================================
+   5. MESSAGE SCREENS — post-call, fault
+   ============================================================================= */
+.screen-message {
+  align-items: center;
+  justify-content: center;
+  padding: var(--edge);
+}
+.message-card {
+  max-width: 82%;
+  padding: calc(var(--mm) * 12) calc(var(--mm) * 14);
+  background: var(--surface);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.message-line {
+  margin: 0;
+  font-size: var(--fs-msg);
+  color: var(--text);
+}
+.message-sub {
+  margin-top: calc(var(--mm) * 6);
+  font-size: calc(var(--mm) * 10);
+  color: #E8E8E8;                       /* 16.4:1 on #1A1A1D */
+}
+
+/* =============================================================================
+   6. Debug harness (desktop only, ?debug=1)
+   -----------------------------------------------------------------------------
+   NOTE: these selectors are deliberately id-based. The harness marks the page
+   with `body.debug-mode`, and a class selector such as `.debug { display:none }`
+   would then match <body> itself and blank the whole app.
+   ============================================================================= */
+#debug {
+  display: none;
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 9999;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.86);
+  border: 1px solid #555;
+  border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: #ddd;
+  max-width: 460px;
+  white-space: pre-wrap;
+}
+body.debug-mode #debug:not([hidden]) { display: block; }
+#debug .debug-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+#debug .debug-row:last-child { margin-bottom: 0; }
+#debug button {
+  padding: 4px 7px;
+  background: #26262a;
+  border: 1px solid #55555c;
+  border-radius: 4px;
+  color: #eee;
+  font: inherit;
+  cursor: pointer;
+}
+#debug button:hover { background: #35353b; }
+#debug .debug-metrics { display: block; color: #9fe3a0; line-height: 1.5; }
+
+#mm-overlay { display: none; position: fixed; inset: 0; z-index: 9998; pointer-events: none; }
+body.debug-mode #mm-overlay:not([hidden]) { display: block; }
+.mm-edge {
+  position: absolute;
+  inset: var(--edge);
+  border: 1px dashed rgba(255, 80, 80, 0.85);
+}
+.mm-square, .mm-gap {
+  position: absolute;
+  bottom: calc(var(--edge) + 4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ff9a9a;
+  font: 400 11px ui-monospace, monospace;
+}
+.mm-square {
+  left: calc(var(--edge) + 4px);
+  width: var(--touch);
+  height: var(--touch);
+  border: 1px solid rgba(255, 120, 120, 0.9);
+}
+.mm-gap {
+  left: calc(var(--edge) + var(--touch) + 12px);
+  width: var(--deadzone);
+  height: 16px;
+  border: 1px solid rgba(120, 160, 255, 0.9);
+  color: #a9c4ff;
+}
+
+/* Reduced motion: keep crossfades (they are the product) but drop the rest. */
+@media (prefers-reduced-motion: reduce) {
+  .btn, .tile { transition: none; }
+}

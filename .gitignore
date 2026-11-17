@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Real secrets — only the .example files belong in git
+.env
+.env.*
+!.env.example
+*.env
+!*.env.example
+
+# Rendered from turnserver.conf template at deploy time (contains the TURN secret)
+turnserver.rendered.conf
+
+# Runtime data: photo libraries, uploads, database volumes
+photos-seed/
+uploads/
+data/
+
+# Logs
+*.log
+logs/
+
+# macOS
+.DS_Store
+
+# Live config written by deploy.sh (tokens, password hashes, sessions)
+config/
+roster.json
+admins.json
+sessions.json
+*.jsonl
+
+# Local agent worktrees and settings
+.claude/

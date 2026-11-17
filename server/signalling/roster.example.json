@@ -1,0 +1,65 @@
+{
+  "_comment": [
+    "Copy this file to the path given by ROSTER_PATH (compose mounts it read-only at /config/roster.json)",
+    "and replace EVERY authToken with a fresh random secret:  openssl rand -hex 24",
+    "",
+    "Whitelist rule enforced by the server (never by the UI):",
+    "  A may call B  <=>  B is listed in A.allowlist  AND  A is listed in B.allowlist.",
+    "A frame therefore reaches exactly the people in its own allowlist, and is reachable by",
+    "exactly those same people. An empty or missing allowlist means the peer can neither call",
+    "nor be called. Keep the lists symmetric; the server logs a warning for one-sided entries.",
+    "",
+    "kind: 'frame' = a tablet at the grandparents, 'family' = a phone/laptop of a family member.",
+    "The file is re-read automatically when its mtime changes (and on SIGHUP), so peers can be",
+    "added without restarting the container.",
+    "",
+    "ONE PEER PER PERSON, NOT ONE PER HOUSEHOLD. The signalling server allows exactly one live",
+    "socket per peer id: a second socket registering the same id closes the first with",
+    "'session-replaced'. If ion and maria shared a peer id, their two phones would kick each",
+    "other offline in a loop for as long as both apps are open, and neither could be called.",
+    "Every admin account in admins.json must therefore point at its OWN peer here.",
+    "",
+    "The ids below are placeholders: rename them to suit your family, and keep them in sync",
+    "with admins.json (peerId), ADMIN_DEFAULT_PEER_ID and FRAME_ALBUM_MAP.",
+    "",
+    "deploy.sh replaces every 'replace-me' token with a random one when it seeds roster.json.",
+    "The server refuses to start while any 'replace-me' token is left."
+  ],
+  "peers": [
+    {
+      "id": "frame-a",
+      "displayName": "Bunicii A",
+      "kind": "frame",
+      "authToken": "replace-me-4f1c9a2be7d6083c5a1e9d47",
+      "allowlist": ["family-ana", "family-ion", "family-maria"]
+    },
+    {
+      "id": "frame-b",
+      "displayName": "Bunicii B",
+      "kind": "frame",
+      "authToken": "replace-me-8b3e05c1d9427af6021c7e5b",
+      "allowlist": ["family-ana", "family-ion", "family-maria"]
+    },
+    {
+      "id": "family-ana",
+      "displayName": "Ana",
+      "kind": "family",
+      "authToken": "replace-me-2a7d64f0c8b31e95d40a6f28",
+      "allowlist": ["frame-a", "frame-b"]
+    },
+    {
+      "id": "family-ion",
+      "displayName": "Ion",
+      "kind": "family",
+      "authToken": "replace-me-6c92f18a5d0b473e8f21ac60",
+      "allowlist": ["frame-a", "frame-b"]
+    },
+    {
+      "id": "family-maria",
+      "displayName": "Maria",
+      "kind": "family",
+      "authToken": "replace-me-d05b7e3419caf862057d1b94",
+      "allowlist": ["frame-a", "frame-b"]
+    }
+  ]
+}

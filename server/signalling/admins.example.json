@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "Copy to the path given by ADMINS_PATH. Compose mounts ${FRAMEO_ROOT}/config read-only at",
+    "/config, so the real file is ~/frameo/config/admins.json, mode 0600.",
+    "",
+    "Generate every passwordHash on the server - the password is read from stdin, never argv:",
+    "  docker exec -i frameo-signalling node hash-password.js -u ion -d 'Ion' -p family-ion",
+    "",
+    "peerId binds the account to a roster peer. That is what keeps canCall() authoritative: a",
+    "call started from a phone is a call FROM that peer, subject to the same symmetric",
+    "allowlist as everything else.",
+    "",
+    "EVERY ACCOUNT NEEDS ITS OWN peerId. The server permits one live WebSocket per peer id and",
+    "closes the older socket when a second one registers the same id. Two accounts sharing a",
+    "peerId means two phones knocking each other offline in a loop, so ion and maria get",
+    "family-ion and family-maria, and both must exist in roster.json with the two frames in",
+    "their allowlist (and themselves in each frame's allowlist).",
+    "",
+    "The file is re-read when its mtime changes (and on SIGHUP). Setting disabled:true drops",
+    "every live session for that account within ACCOUNTS_RELOAD_MS - that is the 'my phone was",
+    "stolen' procedure, and it needs no restart. A malformed file is refused and the previous",
+    "good copy is kept, so a typo at 03:00 cannot lock everyone out.",
+    "",
+    "Minimum password length is 12 characters, enforced by hash-password.js. Recommend a",
+    "four-word passphrase: the grandparents' generation types those far more reliably on a",
+    "phone keyboard than Xk9!q, and they are stronger."
+  ],
+  "accounts": [
+    {
+      "username": "ana",
+      "displayName": "Ana",
+      "peerId": "family-ana",
+      "passwordHash": "scrypt$N=32768,r=8,p=1$REPLACE-ME-SALT$REPLACE-ME-HASH",
+      "disabled": false
+    },
+    {
+      "username": "ion",
+      "displayName": "Ion",
+      "peerId": "family-ion",
+      "passwordHash": "scrypt$N=32768,r=8,p=1$REPLACE-ME-SALT$REPLACE-ME-HASH",
+      "disabled": false
+    },
+    {
+      "username": "maria",
+      "displayName": "Maria",
+      "peerId": "family-maria",
+      "passwordHash": "scrypt$N=32768,r=8,p=1$REPLACE-ME-SALT$REPLACE-ME-HASH",
+      "disabled": false
+    }
+  ]
+}

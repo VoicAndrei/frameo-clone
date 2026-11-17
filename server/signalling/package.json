@@ -1,0 +1,20 @@
+{
+  "name": "frameo-signalling",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WebRTC signalling server + static client host for the self-hosted Frameo replacement (plain P2P, no SFU, tailnet only).",
+  "license": "MIT",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check auth.js && node --check scrypt.js && node --check admin.js && node --check immich.js && node --check multipart.js && node --check ice.js && node --check hash-password.js",
+    "hash-password": "node hash-password.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

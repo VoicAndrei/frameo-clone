@@ -1,0 +1,178 @@
+# docker-compose.turn.yml
+#
+# coturn TURN relay for the self-hosted Frameo replacement.
+#
+# Deployed by ./expose-public.sh (or by hand, from ~/frameo/server):
+#   ./render-turnserver-conf.sh                       # writes ${FRAMEO_ROOT}/config/turnserver.conf
+#   docker compose -f docker-compose.turn.yml up -d
+#
+# WHAT IT IS FOR
+# --------------
+# A phone on mobile data and a tablet on the tailnet cannot always reach each
+# other directly. When they cannot, WebRTC needs a relay. coturn is that relay.
+# It is only ever a FALLBACK: iceTransportPolicy is "all", so ICE tries the
+# direct paths first and most calls never touch this container.
+#
+# WHY network_mode: host  (NOT the `frameo` bridge network)
+# ---------------------------------------------------------
+# ARCHITECTURE-PUBLIC.md section 3.3 calls this non-negotiable, and it is:
+# coturn must BIND the node's tailnet address 100.x.y.z, because relay
+# allocations are handed out on that address and the frames reach them over
+# WireGuard. That address exists only in the host network namespace, since
+# tailscaled runs on the host. A bridge-network container cannot bind it, and
+# no amount of port publishing recreates it - the relay ports are chosen
+# dynamically from 49160-49260 and are addressed as 100.x.y.z:<port> by the
+# remote peer.
+#
+# Consequence: a service
+# with network_mode: host CANNOT also join the external `frameo` network -
+# Docker rejects the combination. That costs us nothing: coturn talks to
+# nothing else in this stack. It never contacts Immich, the signalling server
+# or Postgres; the only thing shared with the signalling server is the value of
+# TURN_STATIC_AUTH_SECRET, passed to each of them separately through .env.
+# Likewise there is no `ports:` block, because host networking publishes
+# nothing - turnserver.conf's listening-ip lines are what decide reachability,
+# and they name exactly 127.0.0.1 and the tailnet IP.
+#
+# HOW THE OUTSIDE WORLD REACHES IT
+# --------------------------------
+#   phones  : tailscale funnel --tls-terminated-tcp=10000 -> tcp://127.0.0.1:3478
+#             (tailscaled terminates TLS; coturn sees plain TURN-over-TCP)
+#   frames  : 100.x.y.z:3478 over UDP (and TCP), straight over the tailnet
+# Nothing is exposed on the LAN and nothing is exposed on the public IPv4.
+#
+# Memory budget for everything this project runs (hard limits, must stay <= 4G):
+#     immich-server    2048m
+#     immich-postgres  1024m
+#     immich-redis      256m
+#     signalling        512m
+#     coturn            128m
+#     -------------------------
+#     total            3968m   <=  frame.slice MemoryHigh=4G
+
+name: frameo-turn
+
+services:
+  coturn:
+    # Pinned, never `latest`. 4.7.0 is the version this configuration was
+    # verified against, option by option, in src/apps/relay/mainrelay.c.
+    # Before bumping it, re-read turnserver.conf against the new sources: an
+    # unknown option there is only a log warning, so a silently ignored
+    # security setting is a realistic failure mode.
+    image: coturn/coturn:4.7.0-alpine
+    container_name: frameo-coturn
+    hostname: frameo-coturn
+
+    restart: unless-stopped
+
+    # --- containment ------------------------------------------------------
+    # Same slice as the rest of the stack: CPUWeight=50, MemoryHigh=4G,
+    # MemoryMax=5G for everything combined. Set per-service because changing
+    # dockerd's global cgroup-parent would need a daemon restart, which would
+    # bounce every other container on the box.
+    cgroup_parent: frame.slice
+
+    # coturn is a small C daemon that forwards packets; it idles at ~10 MB and
+    # a relayed 1:1 call adds almost nothing. 128m is generous.
+    mem_limit: 128m
+    mem_reservation: 32m
+    # Equal to mem_limit => memory.swap.max=0 on cgroup v2: no swap at all.
+    memswap_limit: 128m
+
+    # Relaying is latency-sensitive but cheap. It should not lose a CPU fight
+    # with Immich's thumbnail generation, hence a share equal to signalling's.
+    cpu_shares: 512
+
+    pids_limit: 128
+
+    # --- networking -------------------------------------------------------
+    # See the long comment above. This is the one container in the stack that
+    # is NOT on the `frameo` bridge network, and that is deliberate.
+    network_mode: host
+
+    # --- hardening --------------------------------------------------------
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # NOTE: CAP_NET_BIND_SERVICE must be added
+    # back even though coturn never binds a port below 1024 here. The reason is
+    # exec-time, not runtime: /usr/bin/turnserver in coturn/coturn:4.7.0-alpine
+    # carries FILE capabilities, and the kernel refuses to execve() a file that has
+    # file-caps when the process's capability BOUNDING SET does not contain them.
+    # With a bare `cap_drop: ALL` the container crash-looped on
+    #   docker-entrypoint.sh: /usr/bin/turnserver: Operation not permitted
+    # exiting 126 before coturn ever read its config.
+    #
+    # Verified directly against the image:
+    #   --user 1000 --cap-drop ALL                        -> exit 126
+    #   --user 1000                                       -> exit 0
+    #   --user 1000 --cap-drop ALL --cap-add NET_BIND_SERVICE -> exit 0
+    #   ... and that last one also works WITH no-new-privileges:true.
+    # So this keeps every other capability dropped and loses no hardening.
+    cap_add:
+      - NET_BIND_SERVICE
+    # No capability is needed: 3478 and 49160-49260 are all above 1024, so the
+    # image's CAP_NET_BIND_SERVICE on the binary is never exercised.
+    #
+    # FRAMEO_UID/FRAMEO_GID is the deploy user on the host, which owns
+    # ${FRAMEO_ROOT}/config/turnserver.conf. The upstream image would otherwise
+    # run as nobody:nogroup and could not read a 0600 config file - and coturn
+    # does not fail on an unreadable config, it logs "Cannot find config file"
+    # and starts with ITS DEFAULTS: 0.0.0.0, no authentication, CLI enabled.
+    # That failure mode is why the uid is pinned here rather than left alone.
+    user: "${FRAMEO_UID:-1000}:${FRAMEO_GID:-1000}"
+    read_only: true
+    tmpfs:
+      # coturn writes its pid file here (it picks /var/tmp when not root).
+      - /var/tmp:rw,noexec,nosuid,size=8m,mode=1777
+      # The default SQLite user database path. We authenticate with
+      # use-auth-secret and never touch a database, but coturn still opens this
+      # directory at startup; giving it a writable tmpfs keeps the log clean and
+      # makes read_only: true safe.
+      - /var/lib/coturn:rw,noexec,nosuid,size=8m,mode=1777
+
+    volumes:
+      # Mount the DIRECTORY, not the file: the renderer writes a .tmp file and
+      # renames it into place, which changes the inode. A single-file bind mount
+      # would pin the old inode and the container would keep the stale config
+      # forever (the same trap documented for roster.json).
+      - ${FRAMEO_ROOT:?set FRAMEO_ROOT in server/.env}/config:/config:ro
+
+    # Override the image's default CMD, which is
+    #   ["--log-file=stdout", "--external-ip=$(detect-external-ip)"]
+    # The external-ip autodetection would make coturn advertise the home
+    # router's public IPv4 - an address with no port forwarding behind it,
+    # producing candidates that can never work. Everything we want is in the
+    # config file, so pass only -c.
+    command: ["-c", "/config/turnserver.conf"]
+
+    healthcheck:
+      # A TCP connect to the loopback listener. This is exactly the path
+      # `tailscale funnel --tls-terminated-tcp=10000` forwards to, so a pass
+      # here means the public TURN endpoint has a backend.
+      #
+      # Deliberately NOT `bash -c 'exec 3<>/dev/tcp/...'`: /dev/tcp is a bash
+      # builtin, and this is an ALPINE image whose shell is busybox ash. That
+      # form fails 100% of the time, which marks a perfectly healthy relay as
+      # unhealthy and makes every "is TURN up?" check lie. busybox nc is
+      # present and its -w connect test is portable; pidof is the fallback in
+      # case a future base image drops nc.
+      test:
+        - CMD-SHELL
+        - "nc -w 2 127.0.0.1 3478 </dev/null >/dev/null 2>&1 || pidof turnserver >/dev/null 2>&1"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      com.frameo.component: "turn"
+      com.frameo.slice: "frame.slice"
+      com.centurylinklabs.watchtower.enable: "false"

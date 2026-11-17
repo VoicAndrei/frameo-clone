@@ -1,0 +1,311 @@
+# docker-compose.signalling.yml
+#
+# WebRTC signalling server + the frame/call web client for the self-hosted
+# Frameo replacement.
+#
+# Deployed by ./deploy.sh, which runs (from ~/frameo/server):
+#   docker compose -f docker-compose.signalling.yml up -d --build
+#
+# Design notes
+# ------------
+#  * cgroup_parent puts this container inside frame.slice, so it shares the
+#    project-wide 4G soft / 5G hard memory ceiling with the Immich stack. We use
+#    the per-service key instead of dockerd's global `cgroup-parent` because
+#    setting the latter needs /etc/docker/daemon.json plus a daemon restart, and
+#    restarting dockerd would bounce every other container on the box.
+#  * The published port is bound to 127.0.0.1 only. Tailnet access is provided
+#    by `tailscale serve --bg --https=443 http://127.0.0.1:8080`, which
+#    terminates TLS with an auto-RENEWING Let's Encrypt certificate. A real
+#    HTTPS origin is mandatory: getUserMedia() (camera/mic) is refused on any
+#    non-secure origin. It is also why the tablets must load the MagicDNS name
+#    and never a raw 100.x.y.z address.
+#  * Since ARCHITECTURE-PUBLIC.md, this port IS reachable from the public
+#    internet - through `tailscale funnel --bg --https=443`, configured by
+#    ./expose-public.sh, never through a router port-forward. The container
+#    still publishes only on 127.0.0.1; tailscaled is the sole ingress and the
+#    sole TLS terminator, and the app is gated behind a login. The tablets keep
+#    the same URL and keep taking the tailnet path. See README-public.md.
+#    (Funnel replaced `serve` on 443: the two cannot share a port.)
+#
+# Memory budget for everything this project runs (hard limits, must stay <= 4G):
+#     immich-server    2048m
+#     immich-postgres  1024m
+#     immich-redis      256m
+#     signalling        512m
+#     coturn            128m   (docker-compose.turn.yml)
+#     -------------------------
+#     total            3968m   <=  frame.slice MemoryHigh=4G
+# Changing any mem_limit means re-checking this sum. There is 128m of headroom and no more.
+
+name: frameo-signalling
+
+services:
+  signalling:
+    build:
+      context: ./signalling
+      dockerfile: Dockerfile
+    image: frameo/signalling:local
+    container_name: frameo-signalling
+    hostname: frameo-signalling
+
+    # Survive reboots and crashes, but stay stopped if an operator stopped it
+    # on purpose (unlike `always`, which resurrects it on daemon start).
+    restart: unless-stopped
+
+    # --- containment ------------------------------------------------------
+    # Inherit the project slice: CPUWeight=50, MemoryHigh=4G, MemoryMax=5G,
+    # IOWeight=50, TasksMax=4096 for the whole stack combined.
+    cgroup_parent: frame.slice
+
+    # Per-container hard ceiling. This server keeps all state in memory but the
+    # state is tiny (a handful of peers, at most 2 concurrent calls) and media
+    # never traverses this box - the calls are peer-to-peer. It idles around
+    # 60-80 MB; 512m absorbs a GC spike and still leaves headroom in the slice.
+    mem_limit: 512m
+    mem_reservation: 128m
+    # Equal to mem_limit => memory.swap.max=0 on cgroup v2, i.e. this container
+    # may use no swap at all. It must fail fast rather than thrash a disk that
+    # the rest of the box also depends on.
+    memswap_limit: 512m
+
+    # Relative CPU share inside the slice. Signalling is latency-sensitive but
+    # almost free (0% CPU during an established call), so it needs no big share.
+    cpu_shares: 512
+
+    # Fork-bomb / runaway-worker containment. Node needs a couple of dozen
+    # threads; 256 is generous and still far below the slice's 4096.
+    pids_limit: 256
+
+    # --- hardening --------------------------------------------------------
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # The image already runs as the unprivileged `node` user (uid 1000). Pin it
+    # explicitly: FRAMEO_UID/FRAMEO_GID (set by deploy.sh) is the deploy user on the host, which owns
+    # ~/frameo/logs, so the call log is writable from inside the
+    # container and readable outside it with no chown dance.
+    user: "${FRAMEO_UID:-1000}:${FRAMEO_GID:-1000}"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+
+    # --- networking -------------------------------------------------------
+    # Make sure nothing else on the host already uses 8080.
+    # The 127.0.0.1 binding is deliberate and must never become 0.0.0.0.
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - frameo
+
+    # --- state ------------------------------------------------------------
+    volumes:
+      # The family whitelist lives at ~/frameo/config/roster.json and
+      # is mounted read-only: it is edited on the host, and the server only ever
+      # reads it. Callers absent from it are rejected server-side, never merely
+      # hidden in the UI.
+      #
+      # We mount the DIRECTORY, not the single file, on purpose. The server hot
+      # reloads the roster by polling its mtime; most editors save by writing a
+      # temp file and renaming it over the original, which creates a NEW inode.
+      # A single-file bind mount pins the old inode, so the container would keep
+      # serving the stale roster forever. Mounting the directory makes edits
+      # visible within ROSTER_RELOAD_MS with no restart.
+      #
+      # FRAMEO_ROOT must match the value deploy.sh uses (it creates and chowns
+      # these directories); both default to ~/frameo.
+      - ${FRAMEO_ROOT:?set FRAMEO_ROOT in server/.env}/config:/config:ro
+      # Append-only JSONL call log. ${FRAMEO_ROOT}/logs/calls.jsonl on the host.
+      - ${FRAMEO_ROOT:?set FRAMEO_ROOT in server/.env}/logs:/data:rw
+      # The image ships an empty /app/public; the real client is mounted over it
+      # read-only so a UI tweak is a `docker restart` at worst, not a rebuild.
+      - ./signalling/public:/app/public:ro
+
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      # Inside the container only; the host publication is 127.0.0.1-bound.
+      BIND_ADDR: "0.0.0.0"
+      PUBLIC_DIR: /app/public
+      ROSTER_PATH: /config/roster.json
+      CALL_LOG_PATH: /data/calls.jsonl
+      WS_PATH: /ws
+      # Bearer token for the POST /api/* control endpoints (this is what the
+      # ring trigger authenticates with). Empty disables the control API.
+      # Set it in server/.env - see .env.example.
+      CONTROL_TOKEN: "${CONTROL_TOKEN:-}"
+      # 45s of ringing, not the usual 20: the grandparents may need to cross a
+      # room. Matches the UX spec.
+      RING_TIMEOUT_MS: "${RING_TIMEOUT_MS:-45000}"
+      HEARTBEAT_INTERVAL_MS: "${HEARTBEAT_INTERVAL_MS:-30000}"
+      REGISTER_TIMEOUT_MS: "${REGISTER_TIMEOUT_MS:-10000}"
+      # Two frames, so two simultaneous calls is the ceiling by design.
+      MAX_CONCURRENT_CALLS: "${MAX_CONCURRENT_CALLS:-2}"
+      # Hot-reload poll interval for the roster file (0 disables).
+      ROSTER_RELOAD_MS: "${ROSTER_RELOAD_MS:-15000}"
+
+      # --- Frame liveness ---------------------------------------------------
+      # The tablets run tablet/tailscale-watchdog.sh under Termux:Boot and POST
+      # /api/frame-heartbeat once a minute over the PUBLIC Funnel URL, so the
+      # report keeps arriving even while their tailnet path is broken - which is
+      # exactly the failure it exists to expose. /data is ${FRAMEO_ROOT}/logs on
+      # the host, where server/frame-heartbeat-alert.sh reads it from cron.
+      FRAME_HEARTBEAT_PATH: "${FRAME_HEARTBEAT_PATH:-/data/frame-heartbeats.json}"
+      FRAME_STALE_MS: "${FRAME_STALE_MS:-900000}"
+      FRAME_HEARTBEAT_MIN_MS: "${FRAME_HEARTBEAT_MIN_MS:-20000}"
+      TZ: "${TZ:-Europe/Bucharest}"
+
+      # --- Photo backend --------------------------------------------------
+      # The tablets fetch /api/photos and /api/photo/<id> from THIS server,
+      # which proxies Immich. That keeps the Immich API key on the server and
+      # keeps every URL on one origin, which is what makes the service-worker
+      # photo cache work.
+      #
+      # Immich is reached over the internal `frameo` network by container name,
+      # NOT via the published 127.0.0.1:2283 port.
+      IMMICH_URL: "${IMMICH_URL:-http://immich-server:2283}"
+      # Create in Immich: Account Settings -> API Keys. Without it /api/photos
+      # returns an empty manifest and the frames show only cached photos.
+      IMMICH_API_KEY: "${IMMICH_API_KEY:-}"
+      # Comma-separated Immich album ids to show. Empty = newest images in the
+      # whole library (fine for a first boot, but curate an album for real use).
+      IMMICH_ALBUM_IDS: "${IMMICH_ALBUM_IDS:-}"
+      PHOTO_LIMIT: "${PHOTO_LIMIT:-300}"
+      PHOTO_MANIFEST_TTL_MS: "${PHOTO_MANIFEST_TTL_MS:-300000}"
+      IMMICH_TIMEOUT_MS: "${IMMICH_TIMEOUT_MS:-10000}"
+      # Which album each FRAME shows: "<rosterId>:<albumKey>[+<key>],...".
+      # WITHOUT this, every frame shows the union of all three albums and the admin UI's
+      # "Bunicii A / Bunicii B / Ambele" picker changes nothing about what the tablets
+      # display - photos land in the right Immich album and are then shown everywhere.
+      # The "all" album is always added on top of whatever is listed here.
+      FRAME_ALBUM_MAP: "${FRAME_ALBUM_MAP:-}"
+
+      # Clock-overlay weather (Open-Meteo, no key, no account). Set these to the
+      # GRANDPARENTS' town, not the server's: the frame should agree with what
+      # they see out of the window. Unset = no weather shown.
+      WEATHER_LAT: "${WEATHER_LAT:-}"
+      WEATHER_LON: "${WEATHER_LON:-}"
+      WEATHER_ENABLED: "${WEATHER_ENABLED:-true}"
+
+      # --- ICE / TURN (GET /api/ice, see signalling/ice.js) ----------------
+      # The signalling server mints short-lived TURN credentials from the SAME
+      # secret coturn is started with. The two must match exactly; a mismatch is
+      # invisible until a call needs the relay and silently fails to connect.
+      #
+      # Empty TURN_STATIC_AUTH_SECRET disables /api/ice (it answers 503), which
+      # is the correct behaviour before coturn has been deployed: calls still
+      # work whenever ICE finds a direct path.
+      TURN_STATIC_AUTH_SECRET: "${TURN_STATIC_AUTH_SECRET:-}"
+      # Both URL variables may be left empty: ice.js then derives them from
+      # PUBLIC_ORIGIN and TS_TAILNET_IP respectively.
+      TURN_PUBLIC_URL: "${TURN_PUBLIC_URL:-}"
+      TURN_TAILNET_URL: "${TURN_TAILNET_URL:-}"
+      TURN_TTL_SECONDS: "${TURN_TTL_SECONDS:-43200}"
+      # Offered to public clients only, never to the frames.
+      STUN_URLS: "${STUN_URLS:-stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478}"
+      # Canonical public origin (no trailing slash) and this node's tailnet IPv4.
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-}"
+      TS_TAILNET_IP: "${TS_TAILNET_IP:-}"
+      # Also used by ice.js to verify the frameo_device cookie.
+      SESSION_SECRET: "${SESSION_SECRET:-}"
+
+      # --- Admin auth and the public gate (ARCHITECTURE-PUBLIC.md §2) -------
+      # With the Funnel open, every path except /login, POST /api/auth/login,
+      # GET /api/auth/session, /api/frame-heartbeat and a stubbed /api/health
+      # requires a credential. REQUIRE_AUTH=false disables that gate and is only
+      # ever correct on a tailnet-only box; never with a funnel running.
+      REQUIRE_AUTH: "${REQUIRE_AUTH:-true}"
+      # Named accounts, scrypt-hashed. The file lives in the same /config
+      # directory as roster.json (mounted read-only above) and is hot-reloaded
+      # on mtime change, so disabling a stolen phone needs no restart.
+      # Generate a hash with:
+      #   docker exec -i frameo-signalling node hash-password.js -u ion -p family-ion
+      ADMINS_PATH: "${ADMINS_PATH:-/config/admins.json}"
+      # Alternative/extra accounts straight from .env, one per line or per ";":
+      #   username|Display Name|rosterPeerId|scrypt$...
+      # admins.json wins on a username collision.
+      ADMIN_PASSWORD_HASHES: "${ADMIN_PASSWORD_HASHES:-}"
+      ADMIN_DEFAULT_PEER_ID: "${ADMIN_DEFAULT_PEER_ID:-family-ana}"
+      ACCOUNTS_RELOAD_MS: "${ACCOUNTS_RELOAD_MS:-15000}"
+      # Sessions survive a container restart. /data is ${FRAMEO_ROOT}/logs.
+      SESSION_STORE_PATH: "${SESSION_STORE_PATH:-/data/sessions.json}"
+      SESSION_TTL_SECONDS: "${SESSION_TTL_SECONDS:-7776000}"
+      LOGIN_MAX_FAILURES: "${LOGIN_MAX_FAILURES:-5}"
+      LOGIN_MAX_FAILURES_PER_SOURCE: "${LOGIN_MAX_FAILURES_PER_SOURCE:-20}"
+      LOGIN_MAX_FAILURES_GLOBAL: "${LOGIN_MAX_FAILURES_GLOBAL:-100}"
+      LOGIN_LOCKOUT_SECONDS: "${LOGIN_LOCKOUT_SECONDS:-900}"
+      # Publishing the account list to anonymous callers only helps a scanner.
+      LOGIN_SHOW_ACCOUNTS: "${LOGIN_SHOW_ACCOUNTS:-false}"
+      # Must stay true: the app is only ever reached over HTTPS.
+      COOKIE_SECURE: "${COOKIE_SECURE:-true}"
+      # Development only. MUST be empty in production - it widens the WebSocket
+      # Origin check, which is the only defence against cross-site WS hijacking.
+      EXTRA_ALLOWED_ORIGINS: "${EXTRA_ALLOWED_ORIGINS:-}"
+
+      # --- Admin photo API -------------------------------------------------
+      # The three curated albums, addressed by stable keys a / b / all. If these
+      # are empty the keys are derived from IMMICH_ALBUM_IDS in order.
+      IMMICH_ALBUM_A: "${IMMICH_ALBUM_A:-}"
+      IMMICH_ALBUM_B: "${IMMICH_ALBUM_B:-}"
+      IMMICH_ALBUM_ALL: "${IMMICH_ALBUM_ALL:-}"
+      IMMICH_ALBUM_A_LABEL: "${IMMICH_ALBUM_A_LABEL:-Bunici A}"
+      IMMICH_ALBUM_B_LABEL: "${IMMICH_ALBUM_B_LABEL:-Bunici B}"
+      IMMICH_ALBUM_ALL_LABEL: "${IMMICH_ALBUM_ALL_LABEL:-Toti}"
+      ADMIN_PAGE_SIZE: "${ADMIN_PAGE_SIZE:-60}"
+      ADMIN_INDEX_TTL_MS: "${ADMIN_INDEX_TTL_MS:-60000}"
+      ADMIN_SCAN_LIMIT: "${ADMIN_SCAN_LIMIT:-5000}"
+      ALBUM_META_TTL_MS: "${ALBUM_META_TTL_MS:-600000}"
+      # In-flight uploads are streamed to disk here, then to Immich, then
+      # deleted. Nothing is ever held in memory. /data is ${FRAMEO_ROOT}/logs.
+      UPLOAD_TMP_DIR: "${UPLOAD_TMP_DIR:-/data/uploads-tmp}"
+      # No 10-photo cap: a parent selecting a whole holiday is the normal case.
+      UPLOAD_MAX_FILES: "${UPLOAD_MAX_FILES:-500}"
+      UPLOAD_MAX_FILE_BYTES: "${UPLOAD_MAX_FILE_BYTES:-67108864}"
+      UPLOAD_MAX_TOTAL_BYTES: "${UPLOAD_MAX_TOTAL_BYTES:-2147483648}"
+      UPLOAD_CONCURRENCY: "${UPLOAD_CONCURRENCY:-2}"
+      # Per-file timeout for the server -> Immich leg (not the phone -> server leg).
+      UPLOAD_TIMEOUT_MS: "${UPLOAD_TIMEOUT_MS:-300000}"
+      UPLOAD_DEVICE_ID: "${UPLOAD_DEVICE_ID:-frameo-admin}"
+      # Empty = the built-in list (jpg/png/heic/webp/avif/gif/tiff/raw). Narrow it, never widen.
+      UPLOAD_ALLOWED_EXTENSIONS: "${UPLOAD_ALLOWED_EXTENSIONS:-}"
+      # A 300-photo upload over mobile data can take a while; Node's default
+      # request timeout of 5 minutes would cut it off half way.
+      REQUEST_TIMEOUT_MS: "${REQUEST_TIMEOUT_MS:-1800000}"
+      # DELETE mode=library sends assets to the Immich trash, which is
+      # recoverable. Set true only to allow irreversible deletion.
+      ALLOW_PERMANENT_DELETE: "${ALLOW_PERMANENT_DELETE:-false}"
+
+    healthcheck:
+      # No curl/wget in the image - use Node's built-in fetch (>=18). Mirrors
+      # the HEALTHCHECK baked into the Dockerfile; repeated here so that
+      # `docker inspect` on the compose service shows the real contract.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    # Cap log growth: an unbounded json-file log is a classic way to fill / on
+    # a box where a full disk would take every other service down with it.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      com.frameo.component: "signalling"
+      com.frameo.slice: "frame.slice"
+      # Versions here are pinned deliberately; keep automated updaters out.
+      com.centurylinklabs.watchtower.enable: "false"
+
+networks:
+  # Created by deploy.sh (`docker network create frameo`) if absent. Declared
+  # external so that `docker compose down` can never delete a network the
+  # Immich stack is also attached to.
+  frameo:
+    external: true
+    name: frameo

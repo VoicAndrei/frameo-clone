@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<title>Rama</title>
+<!--
+  Tablet-facing UI for the self-hosted photo frame + video phone.
+  Target device: 11" 1920x1200 Android tablet, landscape, kiosk mode (Fully Kiosk / FreeKiosk).
+
+  Design rules enforced here and in style.css / app.js:
+    - Single tap only. No swipe / double-tap / long-press / drag / pinch / scroll.
+    - Activation happens on POINTERUP inside the target (slide-off aborts).
+    - All geometry is expressed in real millimetres via the --mm custom property,
+      which app.js computes from the actual physical screen size (see README).
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#111111">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no,date=no,address=no,email=no">
+<!-- Assets carry ?v=<BUILD> so a CSS/JS change reaches the tablet on the FIRST
+     reload. Bumping only VERSION in sw.js is not enough: the shell cache is
+     cache-first, so the reload that installs the new worker is still served the
+     OLD bytes by the outgoing worker, and style.css is additionally
+     `public, max-age=300` in the HTTP cache. A new URL has no entry in either.
+     index.html itself is served `no-cache`, so it is always fresh.
+     KEEP IN SYNC with VERSION in sw.js, which derives the same query. -->
+<link rel="stylesheet" href="style.css?v=7">
+<script>
+/*
+ * Runtime configuration.
+ * Anything here can be overridden by the deployer (edit this block) or, for
+ * development, by a query parameter of the same name (see README).
+ */
+window.FRAME_CONFIG = {
+  /* --- backend endpoints (same origin; served by the signalling container) --- */
+  photosUrl:   '/api/photos?limit=300',  // GET -> { photos:[{id,url}] }  (newest first)
+  photoUrlTemplate: '/api/photo/{id}',   // used only when the manifest returns bare ids
+  wsUrl:       null,                     // null -> ws(s)://<same host>/ws
+  wsPath:      '/ws',
+
+  /* --- identity -------------------------------------------------------------
+   * BOTH tablets load this same file, so identity cannot be baked in here.
+   * Provision each tablet once through its kiosk URL:
+   *
+   *   https://<magicdns>/?device=frame-a&token=<that peer's authToken>
+   *
+   * `device` must be an id from the server's roster.json and `token` its
+   * authToken; the pair is persisted to localStorage on first load, so the
+   * kiosk URL can be shortened back to https://<magicdns>/ afterwards.
+   * The display name and the contact list come from the server's `registered`
+   * frame - there is no /api/config endpoint and none is needed.
+   * ------------------------------------------------------------------------ */
+  deviceId:    null,
+  deviceName:  null,
+  authToken:   null,
+
+  /* --- physical geometry ---------------------------------------------------- */
+  screenDiagonalIn: 11,   // physical diagonal of the tablet panel, in inches
+  pxPerMm:          null, // hard override; null = derive from screen size
+
+  /* --- timings (ms) --------------------------------------------------------- */
+  slideDwellMs:     25000,  // photo dwell
+  slideFadeMs:      1500,   // crossfade
+  ringArmMs:        800,    // answer/decline inert period
+  ringMs:           45000,  // how long an incoming call rings
+  missedMs:         60000,  // "<Nume> a sunat"
+  declineUndoMs:    5000,    // undo card after "NU ACUM"
+  dialUndoMs:       3000,    // "Opreste" window after tapping a tile
+  gridIdleMs:       30000,   // no-touch timeout on the call grid
+  outgoingRingMs:   45000,   // how long we wait for the other side to pick up
+  unavailMs:        8000,    // "<Nume> nu poate raspunde acum."
+  postCallMs:       6000,    // "Convorbirea s-a incheiat."
+  reconnectGraceMs: 2000,    // silence before showing "Se reconecteaza..."
+  callFailMs:       25000,   // reconnecting for this long -> end the call
+
+  /* --- input hardening ------------------------------------------------------ */
+  activationLockMs:   1500,  // ignore all input after a successful activation
+  maxHoldMs:          2500,  // holds longer than this do not activate
+  maxContactRadiusMm: 15,    // palm / cheek rejection
+
+  /* --- media ---------------------------------------------------------------- */
+  photoCacheLimit: 300,
+  iceServers: []             // filled at runtime from GET /api/ice
+};
+</script>
+</head>
+<body>
+
+<!-- =========================================================================
+     Icon sprite. Inline so the UI has zero external dependencies and renders
+     identically with the network down. Every button = icon + text + border,
+     so colour is never the only differentiator.
+     ========================================================================= -->
+<svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="ic-answer" viewBox="0 0 24 24">
+    <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>
+  </symbol>
+  <symbol id="ic-hangup" viewBox="0 0 24 24">
+    <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/>
+  </symbol>
+  <symbol id="ic-photos" viewBox="0 0 24 24">
+    <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+  </symbol>
+  <symbol id="ic-stop" viewBox="0 0 24 24">
+    <path d="M6 6h12v12H6z"/>
+  </symbol>
+  <!-- Weather glyphs for the clock stamp. One per WMO code group; app.js maps
+       the code to an id. Filled shapes only: thin strokes disappear against a
+       busy photo at two metres. -->
+  <symbol id="wx-clear" viewBox="0 0 24 24">
+    <path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1.5l1.6 2.8h-3.2L12 1.5zm0 21l-1.6-2.8h3.2L12 22.5zM1.5 12l2.8-1.6v3.2L1.5 12zm21 0l-2.8 1.6v-3.2l2.8 1.6zM4.6 4.6l3.1.6-1.9 1.9-1.2-2.5zm14.8 14.8l-3.1-.6 1.9-1.9 1.2 2.5zM4.6 19.4l1.2-2.5 1.9 1.9-3.1.6zM19.4 4.6l-1.2 2.5-1.9-1.9 3.1-.6z"/>
+  </symbol>
+  <symbol id="wx-night" viewBox="0 0 24 24">
+    <path d="M12.3 3a7.5 7.5 0 1 0 8.7 9.9 6 6 0 0 1-8.7-7.6c0-.8.2-1.6.6-2.3-.2 0-.4 0-.6 0z"/>
+  </symbol>
+  <symbol id="wx-partly" viewBox="0 0 24 24">
+    <path d="M8.5 5a4 4 0 0 1 3.9 3.1 5.3 5.3 0 0 0-3.1 3.3A3.2 3.2 0 0 0 8 11.4 3.7 3.7 0 0 0 8.5 5zm-.2-3.4l1.2 2.1H8.1l.2-2.1zM3 8.6l2.1-1.2v2.4L3 8.6z"/>
+    <path d="M17.2 12.1a4.2 4.2 0 0 0-8 1 3.4 3.4 0 0 0 .5 6.8h7.3a3.9 3.9 0 0 0 .2-7.8z"/>
+  </symbol>
+  <symbol id="wx-cloud" viewBox="0 0 24 24">
+    <path d="M18.4 10.3a5.6 5.6 0 0 0-10.7 1.3 4.4 4.4 0 0 0 .6 8.7h9.8a5 5 0 0 0 .3-10z"/>
+  </symbol>
+  <symbol id="wx-fog" viewBox="0 0 24 24">
+    <path d="M18.4 7.3a5.6 5.6 0 0 0-10.7 1.3 4.4 4.4 0 0 0 .6 8.7h9.8a5 5 0 0 0 .3-10z"/>
+    <rect x="3" y="19" width="18" height="1.8" rx=".9"/>
+    <rect x="6" y="22" width="12" height="1.8" rx=".9"/>
+  </symbol>
+  <symbol id="wx-rain" viewBox="0 0 24 24">
+    <path d="M18.4 7.3a5.6 5.6 0 0 0-10.7 1.3 4.4 4.4 0 0 0 .6 8.7h9.8a5 5 0 0 0 .3-10z"/>
+    <path d="M8.6 18.6l-1.4 3.6 1.9.7 1.4-3.6-1.9-.7zm4.6 0l-1.4 3.6 1.9.7 1.4-3.6-1.9-.7zm4.6 0l-1.4 3.6 1.9.7 1.4-3.6-1.9-.7z"/>
+  </symbol>
+  <symbol id="wx-snow" viewBox="0 0 24 24">
+    <path d="M18.4 7.3a5.6 5.6 0 0 0-10.7 1.3 4.4 4.4 0 0 0 .6 8.7h9.8a5 5 0 0 0 .3-10z"/>
+    <circle cx="8.5" cy="20" r="1.5"/><circle cx="13" cy="22" r="1.5"/><circle cx="17.5" cy="20" r="1.5"/>
+  </symbol>
+  <symbol id="wx-storm" viewBox="0 0 24 24">
+    <path d="M18.4 7.3a5.6 5.6 0 0 0-10.7 1.3 4.4 4.4 0 0 0 .6 8.7h9.8a5 5 0 0 0 .3-10z"/>
+    <path d="M13.5 18h-3l-2 5.5 5.5-4h-2.5l2-1.5z"/>
+  </symbol>
+</svg>
+
+<!-- =========================================================================
+     IDLE — full-screen slideshow. The whole screen is one tap target.
+     No chrome at all beyond the clock stamp: the tap-to-call hint bar was
+     removed because tapping is the ONLY thing the idle screen does, so the
+     label bought nothing and cost 17% of the picture.
+     ========================================================================= -->
+<section id="screen-idle" class="screen screen-idle" data-state="idle">
+  <div class="slides">
+    <div class="slide is-front" id="slide-a">
+      <img class="slide-bg" alt="" decoding="async">
+      <img class="slide-fg" alt="" decoding="async">
+    </div>
+    <div class="slide" id="slide-b">
+      <img class="slide-bg" alt="" decoding="async">
+      <img class="slide-fg" alt="" decoding="async">
+    </div>
+  </div>
+
+  <!-- Clock stamp, top-right. Purely decorative: aria-hidden and
+       pointer-events:none so it can never eat a tap meant for the call. -->
+  <div class="stamp" id="stamp" aria-hidden="true">
+    <div class="stamp-time" id="stamp-time">--:--</div>
+    <div class="stamp-sub">
+      <span class="stamp-date" id="stamp-date"></span>
+      <svg class="stamp-icon" id="stamp-icon" hidden><use href="#wx-clear" id="stamp-icon-use"></use></svg>
+      <span class="stamp-temp" id="stamp-temp"></span>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     INCOMING RING — caller photo, name on a SOLID band, two buttons.
+     ANSWER is exactly 2.4x the area of DECLINE, 27 mm dead zone between them.
+     ========================================================================= -->
+<section id="screen-ring" class="screen screen-person" data-state="ring">
+  <div class="person-photo">
+    <img class="person-bg" alt="" decoding="async">
+    <img class="person-fg" alt="" decoding="async">
+  </div>
+  <div class="band band-call"><span class="band-text" id="ring-name"></span></div>
+  <div class="actions actions-ring">
+    <button type="button" class="btn btn-answer" id="btn-answer">
+      <svg class="btn-icon"><use href="#ic-answer"></use></svg>
+      <span class="btn-label">RASPUNDE</span>
+    </button>
+    <button type="button" class="btn btn-decline" id="btn-decline">
+      <svg class="btn-icon"><use href="#ic-hangup"></use></svg>
+      <span class="btn-label">NU ACUM</span>
+    </button>
+  </div>
+</section>
+
+<!-- =========================================================================
+     DECLINE UNDO — full-screen, 5 s. Nothing new to read: the same band plus
+     the same green RASPUNDE button, so an accidental decline costs one tap.
+     ========================================================================= -->
+<section id="screen-undo" class="screen screen-person" data-state="undo">
+  <div class="person-photo">
+    <img class="person-bg" alt="" decoding="async">
+    <img class="person-fg" alt="" decoding="async">
+  </div>
+  <div class="band band-call"><span class="band-text" id="undo-name"></span></div>
+  <div class="actions actions-single">
+    <button type="button" class="btn btn-answer" id="btn-undo-answer">
+      <svg class="btn-icon"><use href="#ic-answer"></use></svg>
+      <span class="btn-label">RASPUNDE</span>
+    </button>
+  </div>
+  <div class="countdown" id="undo-countdown"><i></i></div>
+</section>
+
+<!-- =========================================================================
+     CALL GRID (outgoing) — 2x2 max of face tiles + full-width grey back bar.
+     No dialer, no keyboard, no text input anywhere.
+     ========================================================================= -->
+<section id="screen-grid" class="screen screen-grid" data-state="grid">
+  <div class="tiles" id="tiles"><!-- built by app.js --></div>
+  <button type="button" class="btn btn-back" id="btn-back">
+    <svg class="btn-icon"><use href="#ic-photos"></use></svg>
+    <span class="btn-label">Inapoi la poze</span>
+  </button>
+</section>
+
+<!-- =========================================================================
+     DIALING (outgoing) — "Suna pe <Nume>..." with a 3 s "Opreste" undo.
+     After the undo window the same button becomes "INCHIDE" so the call can
+     always be ended with one tap.
+     ========================================================================= -->
+<section id="screen-dial" class="screen screen-person" data-state="dial">
+  <div class="person-photo">
+    <img class="person-bg" alt="" decoding="async">
+    <img class="person-fg" alt="" decoding="async">
+  </div>
+  <div class="band"><span class="band-text" id="dial-name"></span></div>
+  <div class="actions actions-single">
+    <button type="button" class="btn btn-stop" id="btn-dial-stop">
+      <svg class="btn-icon"><use href="#ic-stop"></use></svg>
+      <span class="btn-label">Opreste</span>
+    </button>
+  </div>
+  <div class="countdown" id="dial-countdown"><i></i></div>
+</section>
+
+<!-- =========================================================================
+     IN CALL — remote video full screen, self-view PiP bottom-left (inert),
+     exactly one control: INCHIDE, bottom-right, permanently visible.
+     The audio-only layer replaces the video with the person's stored photo
+     and a gentle audio-level ring. It is never announced.
+     ========================================================================= -->
+<section id="screen-call" class="screen screen-call" data-state="call">
+  <video id="remote-video" class="remote-video" autoplay playsinline></video>
+
+  <div class="audio-only" id="audio-only">
+    <img class="person-bg" id="audio-bg" alt="" decoding="async">
+    <div class="audio-ring-wrap">
+      <div class="audio-ring" id="audio-ring"></div>
+      <img class="audio-face" id="audio-face" alt="" decoding="async">
+    </div>
+  </div>
+
+  <video id="self-video" class="self-video" autoplay playsinline muted></video>
+
+  <div class="reconnect-band" id="reconnect-band">
+    <span class="band-text">Se reconecteaza...</span>
+  </div>
+
+  <button type="button" class="btn btn-hangup" id="btn-hangup">
+    <svg class="btn-icon"><use href="#ic-hangup"></use></svg>
+    <span class="btn-label">INCHIDE</span>
+  </button>
+</section>
+
+<!-- ========================= POST CALL ===================================== -->
+<section id="screen-post" class="screen screen-message" data-state="post">
+  <div class="message-card">
+    <p class="message-line">Convorbirea s-a incheiat.</p>
+  </div>
+</section>
+
+<!-- ========================= MISSED CALL =================================== -->
+<section id="screen-missed" class="screen screen-person" data-state="missed">
+  <div class="person-photo">
+    <img class="person-bg" alt="" decoding="async">
+    <img class="person-fg" alt="" decoding="async">
+  </div>
+  <div class="band"><span class="band-text" id="missed-name"></span></div>
+</section>
+
+<!-- ========================= UNAVAILABLE =================================== -->
+<section id="screen-unavail" class="screen screen-person" data-state="unavail">
+  <div class="person-photo">
+    <img class="person-bg" alt="" decoding="async">
+    <img class="person-fg" alt="" decoding="async">
+  </div>
+  <div class="band"><span class="band-text" id="unavail-name"></span></div>
+</section>
+
+<!-- =========================================================================
+     THE ONLY PERMITTED FAILURE SCREEN. No error text, no code, no button.
+     ========================================================================= -->
+<section id="screen-fault" class="screen screen-message" data-state="fault">
+  <div class="message-card">
+    <p class="message-line">Rama se repara singura.</p>
+    <p class="message-line message-sub">Nu trebuie sa faci nimic.</p>
+  </div>
+</section>
+
+<!-- =========================================================================
+     Hidden desktop-only test harness (?debug=1). Never reachable on the
+     tablet: it is display:none unless <body> carries the .debug class, and the
+     class is only added when the query string asks for it.
+     ========================================================================= -->
+<aside id="debug" class="debug" hidden>
+  <div class="debug-row debug-metrics" id="debug-metrics"></div>
+  <div class="debug-row">
+    <button data-dbg="idle">idle</button>
+    <button data-dbg="grid">call-grid</button>
+    <button data-dbg="dial">dialing</button>
+    <button data-dbg="ring">incoming-ring</button>
+    <button data-dbg="undo">decline-undo</button>
+  </div>
+  <div class="debug-row">
+    <button data-dbg="call">in-call</button>
+    <button data-dbg="call-audio">audio-only</button>
+    <button data-dbg="call-reconnect">reconnecting</button>
+    <button data-dbg="post">post-call</button>
+  </div>
+  <div class="debug-row">
+    <button data-dbg="missed">missed</button>
+    <button data-dbg="unavail">unavailable</button>
+    <button data-dbg="fault">fault</button>
+  </div>
+  <div class="debug-row">
+    <button data-dbg="grid-overlay">mm overlay</button>
+    <button data-dbg="next-photo">next photo</button>
+    <button data-dbg="drop-cache">drop cache</button>
+    <button data-dbg="hide">hide panel</button>
+  </div>
+</aside>
+
+<!-- 20 mm / 27 mm measuring overlay, debug only -->
+<div id="mm-overlay" class="mm-overlay" hidden>
+  <div class="mm-edge"></div>
+  <div class="mm-square"><span>20</span></div>
+  <div class="mm-gap"><span>27</span></div>
+</div>
+
+<script src="app.js?v=7"></script>
+</body>
+</html>

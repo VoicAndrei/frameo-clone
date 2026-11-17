@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<title>Rama familiei</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14100E">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Pozele si apelurile video pentru ramele bunicilor.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="format-detection" content="telephone=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rama">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="no-shell">
+
+<!-- ===================================================================== -->
+<!-- Connection banner: shown when the phone is offline or the socket is   -->
+<!-- down. Never blocks anything, just explains the silence.               -->
+<!-- ===================================================================== -->
+<div id="banner" class="banner" role="status" aria-live="polite" hidden></div>
+
+<!-- ===================================================================== -->
+<!-- 1. LOGIN                                                              -->
+<!-- ===================================================================== -->
+<section id="screen-login" class="screen screen-login" hidden>
+  <div class="login-box">
+    <img class="login-logo" src="icon.svg" alt="" width="88" height="88">
+    <h1 class="login-title">Rama familiei</h1>
+
+    <form id="login-form" class="login-form" autocomplete="on" novalidate>
+      <p class="login-label" id="who-label">Cine esti?</p>
+      <div class="who" id="who-list" role="radiogroup" aria-labelledby="who-label"></div>
+
+      <label class="login-label" for="password">Parola</label>
+      <div class="pass-row">
+        <input id="password" class="pass-input" type="password" name="password"
+               autocomplete="current-password" enterkeyhint="go"
+               autocapitalize="off" autocorrect="off" spellcheck="false"
+               inputmode="text" placeholder="Parola ta">
+        <button id="pass-toggle" class="pass-toggle" type="button"
+                aria-label="Arata parola">Arata</button>
+      </div>
+
+      <p id="login-error" class="login-error" role="alert" hidden></p>
+
+      <button id="login-submit" class="btn btn-primary btn-huge" type="submit">Intra</button>
+    </form>
+
+    <p class="login-foot">Aplicatia familiei &middot; poze si apeluri video</p>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<!-- APP SHELL (everything below needs a session)                          -->
+<!-- ===================================================================== -->
+<div id="shell" class="shell" hidden>
+
+  <header class="topbar" id="topbar">
+    <div class="topbar-main">
+      <h1 class="topbar-title" id="topbar-title">Poze</h1>
+      <p class="topbar-sub" id="topbar-sub"></p>
+    </div>
+    <button id="btn-account" class="icon-btn" type="button" aria-label="Contul meu">
+      <span class="avatar" id="avatar-initial">?</span>
+    </button>
+  </header>
+
+  <!-- Global upload progress strip, visible on every screen while uploading -->
+  <div id="upload-strip" class="upload-strip" hidden>
+    <div class="upload-strip-bar"><span id="upload-strip-fill"></span></div>
+    <p class="upload-strip-text" id="upload-strip-text"></p>
+  </div>
+
+  <main class="main" id="main">
+
+    <!-- =============================================================== -->
+    <!-- 2. GALERIE                                                      -->
+    <!-- =============================================================== -->
+    <section id="screen-gallery" class="screen" hidden>
+      <div class="segmented" id="album-filter" role="tablist" aria-label="Filtreaza pozele"></div>
+
+      <div class="gallery-tools">
+        <button id="btn-select" class="btn btn-quiet" type="button">Selecteaza</button>
+        <button id="btn-refresh" class="btn btn-quiet" type="button">Actualizeaza</button>
+      </div>
+      <span class="gallery-count" id="gallery-count"></span>
+
+      <p id="gallery-note" class="note" hidden></p>
+
+      <div id="grid" class="grid" role="list"></div>
+
+      <div id="grid-sentinel" class="sentinel" aria-hidden="true"></div>
+
+      <div id="gallery-empty" class="empty" hidden>
+        <p class="empty-title">Nicio poza aici</p>
+        <p class="empty-text">Apasa <strong>Incarca</strong> jos si alege poze din telefon.</p>
+        <button id="empty-upload" class="btn btn-primary" type="button">Incarca poze</button>
+      </div>
+
+      <div id="gallery-loading" class="loading" hidden>
+        <span class="spinner" aria-hidden="true"></span> Se incarca pozele&hellip;
+      </div>
+
+      <div id="gallery-error" class="empty" hidden>
+        <p class="empty-title">Nu am putut aduce pozele</p>
+        <p class="empty-text" id="gallery-error-text"></p>
+        <button id="gallery-retry" class="btn btn-primary" type="button">Mai incearca</button>
+      </div>
+    </section>
+
+    <!-- =============================================================== -->
+    <!-- 3. INCARCARE                                                    -->
+    <!-- =============================================================== -->
+    <section id="screen-upload" class="screen" hidden>
+      <p class="lead">Alege poze din telefon si trimite-le pe rama bunicilor.</p>
+
+      <h2 class="h2">1. Unde sa apara pozele?</h2>
+      <div class="segmented segmented-tall" id="upload-album" role="radiogroup"
+           aria-label="Alege rama"></div>
+
+      <h2 class="h2">2. Alege pozele</h2>
+      <label class="picker" for="file-input" id="picker-label">
+        <span class="picker-icon" aria-hidden="true">+</span>
+        <span class="picker-text">Alege poze din telefon</span>
+        <span class="picker-hint">Poti alege oricate deodata</span>
+      </label>
+      <input id="file-input" class="visually-hidden" type="file"
+             accept="image/*,.heic,.heif,.HEIC,.HEIF" multiple>
+
+      <div id="upload-summary" class="summary" hidden>
+        <p class="summary-line" id="summary-line"></p>
+        <div class="summary-actions">
+          <button id="btn-retry-failed" class="btn btn-primary" type="button" hidden>Mai incearca pozele nereusite</button>
+          <button id="btn-clear-list" class="btn btn-quiet" type="button">Goleste lista</button>
+          <button id="btn-see-gallery" class="btn btn-quiet" type="button">Vezi pozele</button>
+        </div>
+      </div>
+
+      <button id="btn-cancel-uploads" class="btn btn-danger-quiet" type="button" hidden>Opreste incarcarea</button>
+
+      <ul id="upload-list" class="upload-list"></ul>
+    </section>
+
+    <!-- =============================================================== -->
+    <!-- 5. APEL                                                         -->
+    <!-- =============================================================== -->
+    <section id="screen-call" class="screen" hidden>
+      <!-- This text used to promise that the grandparents did not have to press
+           anything. That was wrong: there is no auto-answer anywhere in the
+           product (deliberately - an unannounced camera opening in someone's
+           living room is not acceptable), so the frame RINGS and they must press
+           the big green RASPUNDE button. Saying otherwise made a missed call look
+           like a broken frame. -->
+      <p class="lead">Suna direct pe rama din camera bunicilor. Rama va suna cu glas tare si va afisa doua butoane mari &mdash; bunicii apasa butonul verde <strong>RASPUNDE</strong>. Suna 45 de secunde.</p>
+      <div id="frame-list" class="frame-list"></div>
+      <div id="frames-empty" class="empty" hidden>
+        <p class="empty-title">Nicio rama configurata</p>
+        <p class="empty-text">Contul tau nu are inca ramele in lista. Spune-i lui Ana.</p>
+      </div>
+      <p class="micro" id="call-help">Daca rama scrie <strong>Nu e pornita</strong>, inseamna ca tableta e stinsa sau nu are internet.</p>
+    </section>
+
+  </main>
+
+  <!-- =================================================================== -->
+  <!-- Bottom navigation                                                   -->
+  <!-- =================================================================== -->
+  <nav class="tabbar" id="tabbar" aria-label="Meniu principal">
+    <button class="tab" type="button" data-tab="gallery" aria-current="page">
+      <span class="tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="26" height="26"><rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.6 17.4 10 11.4l3.1 4.1 2.2-2.6 3.1 4.5z" fill="currentColor"/><circle cx="16.1" cy="9.3" r="1.7" fill="currentColor"/></svg>
+      </span>
+      <span class="tab-text">Poze</span>
+    </button>
+    <button class="tab" type="button" data-tab="upload">
+      <span class="tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 3.6 17 9h-3.2v6.2h-3.6V9H7l5-5.4ZM4.5 18.4h15V21h-15v-2.6Z" fill="currentColor"/></svg>
+      </span>
+      <span class="tab-text">Incarca</span>
+      <span class="tab-badge" id="tab-badge-upload" hidden></span>
+    </button>
+    <button class="tab" type="button" data-tab="call">
+      <span class="tab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path d="M4 6.5h9.5a2 2 0 0 1 2 2v1.9l3.6-2.4a.8.8 0 0 1 1.25.66v6.68a.8.8 0 0 1-1.25.66l-3.6-2.4v1.9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" fill="currentColor"/></svg>
+      </span>
+      <span class="tab-text">Apel video</span>
+      <span class="tab-dot" id="tab-dot-call" hidden></span>
+    </button>
+  </nav>
+</div>
+
+<!-- ===================================================================== -->
+<!-- Lightbox / photo viewer                                               -->
+<!-- ===================================================================== -->
+<div id="viewer" class="viewer" hidden role="dialog" aria-modal="true" aria-label="Poza marita">
+  <div class="viewer-top">
+    <button id="viewer-close" class="round-btn" type="button" aria-label="Inchide">&#10005;</button>
+    <p class="viewer-meta" id="viewer-meta"></p>
+    <button id="viewer-delete" class="round-btn round-btn-danger" type="button" aria-label="Sterge poza">
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 11.2a1.8 1.8 0 0 1-1.8 1.6H8.8A1.8 1.8 0 0 1 7 20.2L6 9Zm4 2v8h1.6v-8H10Zm3.4 0v8H15v-8h-1.6Z" fill="currentColor"/></svg>
+    </button>
+  </div>
+  <div class="viewer-stage" id="viewer-stage">
+    <img id="viewer-img" class="viewer-img" alt="">
+  </div>
+  <div class="viewer-bottom">
+    <button id="viewer-prev" class="round-btn" type="button" aria-label="Poza dinainte">&#8249;</button>
+    <span class="viewer-pos" id="viewer-pos"></span>
+    <button id="viewer-next" class="round-btn" type="button" aria-label="Poza urmatoare">&#8250;</button>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- Selection action bar (multi-select mode)                              -->
+<!-- ===================================================================== -->
+<div id="selbar" class="selbar" hidden>
+  <button id="sel-cancel" class="btn btn-quiet" type="button">Renunta</button>
+  <span class="sel-count" id="sel-count">0 selectate</span>
+  <button id="sel-delete" class="btn btn-danger" type="button">Sterge</button>
+</div>
+
+<!-- ===================================================================== -->
+<!-- Bottom sheet (confirmations)                                          -->
+<!-- ===================================================================== -->
+<div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+<div id="sheet" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+  <h2 class="sheet-title" id="sheet-title"></h2>
+  <p class="sheet-text" id="sheet-text"></p>
+  <div class="sheet-actions" id="sheet-actions"></div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- Full screen call UI                                                   -->
+<!-- ===================================================================== -->
+<div id="callui" class="callui" hidden role="dialog" aria-modal="true" aria-label="Apel video">
+  <video id="remote-video" class="remote-video" autoplay playsinline></video>
+
+  <div class="call-overlay">
+    <div class="call-head">
+      <p class="call-peer" id="call-peer">&nbsp;</p>
+      <p class="call-status" id="call-status">&nbsp;</p>
+      <p class="call-relay" id="call-relay" hidden>Conexiune prin server</p>
+    </div>
+
+    <video id="local-video" class="local-video" autoplay playsinline muted></video>
+
+    <div class="call-controls" id="call-controls">
+      <button id="btn-mic" class="cbtn" type="button" aria-pressed="false">
+        <span class="cbtn-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="30" height="30"><path d="M12 14.5a3 3 0 0 0 3-3v-5a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Zm5.5-3.2a.9.9 0 0 1 1.8 0 7.3 7.3 0 0 1-6.4 7.2V21h-1.8v-2.5a7.3 7.3 0 0 1-6.4-7.2.9.9 0 0 1 1.8 0 5.5 5.5 0 0 0 11 0Z" fill="currentColor"/></svg>
+        </span>
+        <span class="cbtn-text" id="btn-mic-text">Microfon</span>
+      </button>
+
+      <button id="btn-cam" class="cbtn" type="button" aria-pressed="false">
+        <span class="cbtn-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="30" height="30"><path d="M4 6.5h9.5a2 2 0 0 1 2 2v1.9l3.6-2.4a.8.8 0 0 1 1.25.66v6.68a.8.8 0 0 1-1.25.66l-3.6-2.4v1.9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" fill="currentColor"/></svg>
+        </span>
+        <span class="cbtn-text" id="btn-cam-text">Camera</span>
+      </button>
+
+      <button id="btn-flip" class="cbtn" type="button">
+        <span class="cbtn-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="30" height="30"><path d="M12 7.5a5.5 5.5 0 0 1 5.1 3.5h-2l3 4 3-4h-2A7.5 7.5 0 0 0 12 5.5a7.4 7.4 0 0 0-4.3 1.35l1.4 1.4A5.4 5.4 0 0 1 12 7.5Zm0 9a5.5 5.5 0 0 1-5.1-3.5h2l-3-4-3 4h2A7.5 7.5 0 0 0 12 18.5c1.6 0 3.05-.5 4.3-1.35l-1.4-1.4A5.4 5.4 0 0 1 12 16.5Z" fill="currentColor"/></svg>
+        </span>
+        <span class="cbtn-text">Intoarce</span>
+      </button>
+
+      <button id="btn-hangup" class="cbtn cbtn-hangup" type="button">
+        <span class="cbtn-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="30" height="30"><path d="M12 9c-2.2 0-4.3.4-6.2 1.2v2.6c0 .6-.5 1.1-1.1 1.1-.3 0-.6-.1-.8-.3l-1.6-1.6a1.4 1.4 0 0 1 0-2C4.6 7.9 8.1 6.5 12 6.5s7.4 1.4 9.7 3.5a1.4 1.4 0 0 1 0 2l-1.6 1.6c-.2.2-.5.3-.8.3-.6 0-1.1-.5-1.1-1.1v-2.6C16.3 9.4 14.2 9 12 9Z" fill="currentColor"/></svg>
+        </span>
+        <span class="cbtn-text">Inchide</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Ringing overlay (outgoing + incoming) -->
+  <div id="ring" class="ring" hidden>
+    <div class="ring-inner">
+      <div class="ring-avatar" id="ring-avatar">&#9679;</div>
+      <p class="ring-name" id="ring-name"></p>
+      <p class="ring-sub" id="ring-sub"></p>
+      <div class="ring-actions" id="ring-actions"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- Toast                                                                 -->
+<!-- ===================================================================== -->
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<!-- Boot splash, removed by app.js as soon as it knows which screen to show -->
+<div id="boot" class="boot">
+  <span class="spinner spinner-lg" aria-hidden="true"></span>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

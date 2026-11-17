@@ -1,0 +1,312 @@
+# =============================================================================
+# Immich photo backend - frameo-clone
+# =============================================================================
+# Host:     any Linux box with Docker + Compose v2 and cgroup v2 (systemd)
+# Deploy:   ~/frameo/server
+# Run:      docker compose -f docker-compose.immich.yml --env-file .env up -d
+#
+# Derived from the OFFICIAL Immich v3.1.0 release compose file
+# (https://github.com/immich-app/immich/releases/download/v3.1.0/docker-compose.yml)
+# with the following deliberate deviations - see README-immich.md:
+#
+#   1. The immich-machine-learning service is ABSENT (not commented out, not
+#      "disabled"). See the note on the immich-server service below.
+#   2. Every service is pinned, memory-capped, pids-capped and placed in the
+#      "frame.slice" cgroup so this stack can never starve other services on
+#      the box, including ones that run as plain user processes.
+#   3. The host port is bound to 127.0.0.1 only; the tailnet is the only
+#      remote access path.
+#
+# SAFETY: this file never touches the Docker daemon config. cgroup_parent is a
+# per-service setting, so the daemon and any other containers are untouched.
+#
+# Memory budget (hard ceilings, enforced by the kernel):
+#     immich-server    2048 MiB
+#     immich-postgres  1024 MiB
+#     immich-redis      256 MiB
+#     -----------------------------
+#     TOTAL            3328 MiB  (3.25 GiB, inside the 4 GiB project budget)
+# =============================================================================
+
+name: frameo-immich
+
+# -----------------------------------------------------------------------------
+# YAML anchor: applied to every service. Keeping it in one place guarantees no
+# service can accidentally escape the frame.slice cgroup or the restart policy.
+# -----------------------------------------------------------------------------
+x-frameo-common: &frameo-common
+  restart: unless-stopped
+  cgroup_parent: frame.slice
+  # Containers must not be allowed to swap: swapping is what actually kills
+  # interactive latency for everything else on the host. Each service therefore sets
+  # memswap_limit == mem_limit, which on cgroup v2 becomes memory.swap.max=0.
+  # (mem_swappiness is deliberately NOT used - Docker ignores it on cgroup v2.)
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # ---------------------------------------------------------------------------
+  # immich-server
+  # ---------------------------------------------------------------------------
+  # Single container running the API, the web UI and the background microservices
+  # workers (Immich merged them in v1.118; there is no separate immich-microservices
+  # container any more).
+  #
+  # WHY THERE IS NO immich-machine-learning CONTAINER
+  # -------------------------------------------------
+  # The ML container is by far the heaviest component of an Immich deployment: it
+  # loads CLIP + face-recognition ONNX models into RAM and typically sits at
+  # 1.5-3 GiB RSS while pinning several CPU cores during a scan. That would
+  # compete directly with whatever else the server runs, and services that are
+  # not systemd units cannot be protected from it by drop-ins.
+  #
+  # It also buys us nothing. This deployment exists to feed a fixed slideshow to
+  # two tablets at the grandparents' houses. Smart search, face clustering, OCR
+  # and duplicate detection are never used by that flow; albums are curated by
+  # hand. So the container is removed entirely rather than left present-but-off,
+  # which also removes the model-cache volume and ~1.5 GiB of image pull.
+  #
+  # IMMICH_MACHINE_LEARNING_ENABLED=false is set below. Note that on Immich v3 the
+  # authoritative switch is the admin setting machineLearning.enabled - after the
+  # first boot, turn Machine Learning off in Administration -> Settings, or use
+  # the IMMICH_CONFIG_FILE approach documented in README-immich.md. Without that,
+  # the server will log periodic connection failures to a non-existent ML host.
+  # ---------------------------------------------------------------------------
+  immich-server:
+    <<: *frameo-common
+    container_name: immich-server
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.1.0}
+    depends_on:
+      immich-postgres:
+        condition: service_healthy
+      immich-redis:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Europe/Bucharest}
+
+      # --- Database ----------------------------------------------------------
+      # MUST be set explicitly. Immich defaults DB_HOSTNAME to "database"; our
+      # service is called immich-postgres, so the default would not resolve.
+      DB_HOSTNAME: immich-postgres
+      DB_PORT: "5432"
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required - copy .env.example to .env and set it}
+      DB_DATABASE_NAME: ${DB_DATABASE_NAME:-immich}
+      # Pin the vector extension instead of relying on auto-detection, so a
+      # mismatched image fails loudly at startup rather than silently picking
+      # plain pgvector and then failing during index creation.
+      DB_VECTOR_EXTENSION: vectorchord
+      DB_STORAGE_TYPE: ${DB_STORAGE_TYPE:-SSD}
+
+      # --- Redis / Valkey ----------------------------------------------------
+      # Same story: Immich defaults REDIS_HOSTNAME to "redis".
+      REDIS_HOSTNAME: immich-redis
+      REDIS_PORT: "6379"
+      REDIS_DBINDEX: "0"
+
+      # --- Server ------------------------------------------------------------
+      # IMMICH_HOST is the bind address INSIDE the container. It stays 0.0.0.0 so
+      # the port publish below works; host-side exposure is restricted by binding
+      # the published port to 127.0.0.1.
+      IMMICH_HOST: 0.0.0.0
+      IMMICH_PORT: "2283"
+      IMMICH_MEDIA_LOCATION: /data
+      IMMICH_LOG_LEVEL: ${IMMICH_LOG_LEVEL:-log}
+
+      # --- Machine learning --------------------------------------------------
+      # Requested belt-and-braces switch. See the block comment above: on v3 the
+      # binding setting is the admin/config-file one, this env var is the legacy
+      # name and is harmless if ignored.
+      IMMICH_MACHINE_LEARNING_ENABLED: "false"
+    volumes:
+      # Photo/video library. Do not change the container-side path (/data) - it
+      # is IMMICH_MEDIA_LOCATION and Immich stores absolute-ish paths relative
+      # to it in the database.
+      - ${UPLOAD_LOCATION:?UPLOAD_LOCATION is required}:/data
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      # 127.0.0.1 ONLY. Tablets reach this over Tailscale, which terminates on
+      # the host; nothing needs to listen on 0.0.0.0.
+      - "127.0.0.1:2283:2283"
+    # Hard ceiling. The kernel OOM-kills this container before the host enters
+    # global memory pressure, which is the whole point of the exercise.
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 512
+    # Use the healthcheck baked into the official image
+    # (/usr/src/app/bin/immich-healthcheck). "disable: false" means "inherit".
+    healthcheck:
+      disable: false
+    networks:
+      - frameo
+
+  # ---------------------------------------------------------------------------
+  # immich-postgres
+  # ---------------------------------------------------------------------------
+  # THIS IS NOT PLAIN POSTGRES AND MUST NOT BE SWAPPED FOR postgres:16 ETC.
+  #
+  # Immich stores CLIP/face embeddings in vector columns and needs the VectorChord
+  # (vchord) extension plus pgvector and earthdistance. The official image below
+  # ships all of them AND, critically, ships a tuned postgresql.conf at
+  # /etc/postgresql/postgresql.conf that contains:
+  #
+  #     shared_preload_libraries = 'vchord.so'      (plus 'vectors.so' on the
+  #                                                  pgvectors-flavoured tags)
+  #     search_path              = '"$user", public, vectors'
+  #
+  # shared_preload_libraries can only be set at postmaster start, which is why
+  # the image's CMD is:
+  #
+  #     postgres -c config_file=/etc/postgresql/postgresql.conf
+  #
+  # ==> If you override `command:` and drop that -c config_file flag, Postgres
+  #     falls back to the config inside the data directory, vchord.so is never
+  #     preloaded, and Immich dies at startup with
+  #     "Failed to activate VectorChord extension". That is the single most
+  #     common Immich deployment failure. The command below therefore KEEPS the
+  #     config_file flag first and only appends memory overrides after it
+  #     (later -c flags win over the config file).
+  #
+  # The image is pinned by tag AND digest, exactly as shipped in the v3.1.0
+  # release compose file.
+  # ---------------------------------------------------------------------------
+  immich-postgres:
+    <<: *frameo-common
+    container_name: immich-postgres
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    environment:
+      TZ: ${TZ:-Europe/Bucharest}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required - copy .env.example to .env and set it}
+      POSTGRES_DB: ${DB_DATABASE_NAME:-immich}
+      # Data checksums can only be enabled at initdb time - i.e. on the very
+      # first start with an empty data directory. Immich's healthcheck script
+      # reads them to detect silent corruption.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      # Selects postgresql.ssd.conf vs postgresql.hdd.conf inside the image.
+      # Set DB_STORAGE_TYPE=HDD in .env if the database lives on a spinning disk.
+      DB_STORAGE_TYPE: ${DB_STORAGE_TYPE:-SSD}
+    command:
+      - postgres
+      # MUST STAY FIRST - carries shared_preload_libraries. See comment above.
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      # Overrides sized for the 1 GiB container ceiling. Postgres' own memory
+      # accounting is unaware of the cgroup limit, so it has to be told.
+      - -c
+      - max_connections=50
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=640MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - wal_compression=on
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - min_wal_size=128MB
+      - -c
+      - checkpoint_completion_target=0.9
+      # NVMe: random reads are cheap, deep queues are fine.
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      # Keep parallelism modest - the CPUs are shared with the rest of the box.
+      - -c
+      - max_worker_processes=8
+      - -c
+      - max_parallel_workers=4
+      - -c
+      - max_parallel_workers_per_gather=2
+      # Log to stdout so `docker logs` works and nothing accumulates in the volume.
+      - -c
+      - logging_collector=off
+    volumes:
+      # Container-side path is fixed by the image (PGDATA). Change the HOST side
+      # via DB_DATA_LOCATION in .env, never this line.
+      - ${DB_DATA_LOCATION:?DB_DATA_LOCATION is required}:/var/lib/postgresql/data
+    # Postgres uses POSIX shared memory for parallel query workers; the Docker
+    # default of 64m is too small and causes "could not resize shared memory".
+    shm_size: 128mb
+    mem_limit: 1g
+    memswap_limit: 1g
+    pids_limit: 256
+    # Inherit the image healthcheck (healthcheck.sh: pg_isready + checksum
+    # verification). It declares --start-interval=5s, so `depends_on:
+    # service_healthy` resolves within seconds on a warm start.
+    healthcheck:
+      disable: false
+    networks:
+      - frameo
+
+  # ---------------------------------------------------------------------------
+  # immich-redis
+  # ---------------------------------------------------------------------------
+  # Immich moved from Redis to Valkey (the BSD-licensed Redis fork) in the v1.13x
+  # line; the official release compose ships valkey:9. The service is still
+  # addressed with the REDIS_* variables and valkey ships redis-cli compatibility
+  # symlinks, so nothing else changes. Pinned by tag + digest from the v3.1.0
+  # release compose.
+  #
+  # This is a pure job queue (BullMQ). It holds no durable state we care about:
+  # if it is wiped, in-flight jobs are lost and Immich re-queues them. No volume
+  # is mounted on purpose, which also keeps its footprint bounded.
+  # ---------------------------------------------------------------------------
+  immich-redis:
+    <<: *frameo-common
+    container_name: immich-redis
+    image: docker.io/valkey/valkey:9@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411
+    environment:
+      TZ: ${TZ:-Europe/Bucharest}
+    # Tell Valkey about the cgroup ceiling too: at 192 MiB it starts evicting
+    # instead of growing until the kernel kills it. 'noeviction' would be wrong
+    # here - BullMQ tolerates losing queue entries, an OOM kill is worse.
+    command:
+      - valkey-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - allkeys-lru
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 128
+    healthcheck:
+      # valkey-cli is the native binary; redis-cli only exists as a compat
+      # symlink. Try the native name first so the check cannot depend on it.
+      test: ["CMD-SHELL", "valkey-cli ping 2>/dev/null | grep -q PONG || redis-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - frameo
+
+# -----------------------------------------------------------------------------
+# Dedicated external network. Created once, out of band:
+#     docker network create frameo
+# It is deliberately not shared with any other stack on the box, so unrelated
+# containers cannot reach Immich or Postgres.
+# -----------------------------------------------------------------------------
+networks:
+  frameo:
+    external: true
+    name: frameo
+
+# No named volumes. Both stateful paths are host bind mounts under
+# ~/frameo/data so they can be snapshotted, quota-ed and moved without
+# going through the Docker volume driver. (The upstream `model-cache` volume is
+# gone along with the machine-learning container.)

@@ -1,0 +1,128 @@
+# frame.slice - resource containment for the whole self-hosted Frameo replacement.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The server may run other services you care about. If those run as plain user
+# processes rather than systemd units, they cannot be given MemoryMin= / OOMScoreAdjust=
+# protection of their own, and there is no drop-in to write for them.
+#
+# The protection that always works is the inverse: put a hard ceiling on *this* stack so
+# it can never push the machine into global memory pressure. Everything this
+# project runs (all Docker containers, via `cgroup_parent: frame.slice` in the compose
+# files) lives inside this one cgroup v2 slice and can never collectively exceed it.
+#
+# NOTE: we deliberately do NOT set `cgroup-parent` in /etc/docker/daemon.json, because
+# that would require restarting dockerd, which would bounce every other container on the
+# box. Per-service `cgroup_parent:` in compose achieves the same containment with zero
+# daemon impact.
+#
+# Slice naming: `frame.slice` has no dashes, so its parent is the root slice `-.slice`.
+# (A slice named `foo-bar.slice` would instead nest under `foo.slice`.)
+#
+# INSTALL (deploy.sh does this; by hand, run on the server as the deploy user)
+# -----------------------------------------------------------------------------
+#   sudo install -m 0644 -o root -g root \
+#        ~/frameo/server/frame.slice /etc/systemd/system/frame.slice
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now frame.slice
+#
+# VERIFY
+# ------
+#   systemctl status frame.slice
+#   systemd-cgls /frame.slice                    # tree of everything inside
+#   systemctl show frame.slice -p MemoryCurrent -p MemoryHigh -p MemoryMax -p TasksCurrent
+#   cat /sys/fs/cgroup/frame.slice/memory.pressure   # PSI: is it being squeezed?
+#
+# CHANGING LIMITS
+# ---------------
+# Edit this file, re-run the three install commands above. `systemctl daemon-reload`
+# re-applies resource-control settings to the live cgroup without stopping anything.
+# For a temporary, non-persistent change:
+#   sudo systemctl set-property frame.slice MemoryHigh=3G      # add --runtime to not persist
+#
+# UNINSTALL
+# ---------
+#   sudo systemctl disable --now frame.slice     # stops nothing by itself if empty
+#   sudo rm /etc/systemd/system/frame.slice && sudo systemctl daemon-reload
+
+[Unit]
+Description=Frameo clone (photo frame + WebRTC signalling) resource slice
+Documentation=https://github.com/VoicAndrei/frameo-clone/blob/main/server/README-ops.md
+Documentation=man:systemd.slice(5)
+Documentation=man:systemd.resource-control(5)
+# Slices must be set up before the units that get placed inside them.
+Before=slices.target
+# Purely advisory ordering: Docker containers are what actually lands in here.
+After=docker.service
+
+[Slice]
+
+# --- CPU -------------------------------------------------------------------
+# CPUWeight is a *relative* share, only consulted when CPUs are actually
+# contended. Default for every other unit/user process is 100; 50 means that
+# under contention this slice gets roughly half the CPU time per runnable task
+# that any other process gets. On an idle machine it imposes no throttling at
+# all - unused CPU is still fully available.
+# This is deliberately a weight and NOT a hard `CPUQuota=`: a quota would make
+# Immich thumbnail generation crawl even when every other core is idle.
+CPUWeight=50
+CPUAccounting=yes
+
+# --- MEMORY ----------------------------------------------------------------
+# MemoryHigh is the *soft* limit / throttle point. Crossing 4G does not kill
+# anything; the kernel puts the slice under aggressive reclaim pressure and
+# throttles its allocations. This is the limit that should normally bite - it
+# degrades our photo stack gracefully instead of killing it.
+MemoryHigh=4G
+
+# MemoryMax is the *hard* ceiling. If the slice somehow reaches 5G despite the
+# reclaim pressure above, the kernel OOM killer fires *inside this cgroup* and
+# kills one of OUR processes. It can never reach out and kill anything else on
+# the box, because that lives outside this slice. 1G of headroom between High
+# and Max is the shock absorber for a burst (e.g. an Immich import of a large
+# video).
+#
+# Total budget check: the container mem_limits (Immich server+postgres+redis
+# with ML disabled, signalling, coturn) add up to 3968m, under 4G. 16 GB of RAM
+# on the server is plenty. See README-ops.md for the full table.
+MemoryMax=5G
+
+# Deny swap to this slice. Swapping our containers would generate disk I/O and
+# stalls that hurt the whole machine far more than just
+# reclaiming or OOM-killing a photo service. Relax this (e.g. MemorySwapMax=1G)
+# only if Immich's postgres starts getting OOM-killed under normal load.
+MemorySwapMax=0
+
+MemoryAccounting=yes
+
+# --- systemd-oomd (userspace OOM, enabled by default on Ubuntu 24.04) -------
+# These make systemd-oomd pick THIS slice as the victim before the kernel ever
+# has to make a machine-wide decision. Under sustained memory pressure inside
+# the slice (>60% of a 20s window stalled on memory), oomd kills the greediest
+# cgroup in here. That is exactly the behaviour we want: this stack dies first,
+# nothing else on the box does. Harmless no-op if systemd-oomd is not running.
+ManagedOOMMemoryPressure=kill
+ManagedOOMMemoryPressureLimit=60%
+ManagedOOMSwap=kill
+
+# --- BLOCK I/O -------------------------------------------------------------
+# IOWeight is the disk-bandwidth analogue of CPUWeight: relative, range
+# 1..10000, default 100. 50 means that when the disk is saturated (a bulk photo
+# upload, an Immich re-index, a restic backup), other processes' I/O wins. Like
+# CPUWeight it only matters under contention. Requires a weight-aware I/O
+# controller; on cgroup v2 with the `none`/`mq-deadline` scheduler the kernel's
+# io.cost controller handles this, and with `bfq` it is honoured directly.
+IOWeight=50
+IOAccounting=yes
+
+# --- PROCESS/THREAD COUNT --------------------------------------------------
+# Hard cap on total processes + threads created anywhere inside the slice.
+# 4096 is far above what this stack needs (signalling ~20, Immich ~200) but far
+# below the system-wide limit, so a runaway loop or fork bomb in a container
+# exhausts our budget and gets EAGAIN instead of exhausting the machine's PID
+# space and taking everything else down with it.
+TasksMax=4096
+TasksAccounting=yes
+
+[Install]
+WantedBy=slices.target

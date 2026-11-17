@@ -1,0 +1,21 @@
+{
+  "name": "Rama familiei",
+  "short_name": "Rama",
+  "description": "Pozele si apelurile video pentru ramele bunicilor.",
+  "id": "/admin/",
+  "start_url": "/admin/",
+  "scope": "/admin/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14100E",
+  "theme_color": "#14100E",
+  "lang": "ro",
+  "dir": "ltr",
+  "categories": ["photo", "social", "utilities"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
