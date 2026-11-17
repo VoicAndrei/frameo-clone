@@ -13,7 +13,18 @@ anything.
 > 2026 on one server and one Samsung Galaxy Tab A9+. The interface is in Romanian (see
 > [Limitations](#limitations)).
 
-<!-- Screenshots: docs/images/frame-idle.jpg, docs/images/frame-ringing.jpg, docs/images/admin.jpg -->
+| The frame, showing photos | Someone is calling |
+|---|---|
+| ![The frame showing a photo with the clock and weather](docs/images/frame-idle.jpg) | ![Incoming call: "Ana te suna" with a large green RASPUNDE button and a smaller red NU ACUM button](docs/images/frame-ringing.png) |
+| **After a wrong "not now": 5 seconds to answer anyway** | **The only failure screen: "The frame is fixing itself. You don't need to do anything."** |
+| ![After declining, only the answer button stays on screen for 5 seconds](docs/images/frame-decline-undo.png) | ![Fault screen](docs/images/frame-fault.png) |
+
+| Family app: login | Family app: photos |
+|---|---|
+| <img src="docs/images/admin-login.png" width="280" alt="Login screen with one button per family member"> | <img src="docs/images/admin-photos.png" width="280" alt="Photo gallery with tabs for each frame"> |
+
+<sub>Screenshots are from the real web apps in a desktop browser, with generated sample images instead
+of family photos.</sub>
 
 ## Why
 
